@@ -71,6 +71,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [range, setRange] = useState("12");   // chart window: "all" | "12" | "6"
+  const [gameFilter, setGameFilter] = useState("");
 
   // ----- load roster + game list + saved rules, then Steam data -----
   async function loadAll() {
@@ -121,15 +123,17 @@ export default function App() {
   const scored = useMemo(() => {
     if (!meta || !clubData) return null;
     const members = meta.members;
+    const adjustMap = Object.fromEntries(meta.games.map((g) => [g.appid, g.adjust ?? 0]));
 
     const games = clubData.games.map((g) => {
-      const diff = difficultyFromRarity(g.ach.map((a) => a.pct), cfg);
+      const adjust = adjustMap[g.appid] ?? 0;
+      const diff = difficultyFromRarity(g.ach.map((a) => a.pct), cfg, adjust);
       const players = {};
       for (const m of members) {
         const unlocks = g.players[m.steamid];
-        if (unlocks) players[m.steamid] = scoreGame(g.ach, unlocks, cfg);
+        if (unlocks) players[m.steamid] = scoreGame(g.ach, unlocks, cfg, adjust);
       }
-      return { ...g, diff, results: players };
+      return { ...g, diff, adjust, results: players };
     });
 
     const board = members.map((m) => {
@@ -140,7 +144,7 @@ export default function App() {
       return { ...m, points, perfects: perfects.length, inProg: rows.length - perfects.length, hardest };
     }).sort((a, b) => b.points - a.points);
 
-    const timeline = buildTimeline(clubData.games, members, cfg);
+    const timeline = buildTimeline(clubData.games, members, cfg, adjustMap);
     const histogram = Array.from({ length: 10 }, (_, i) => ({
       diff: i + 1, games: games.filter((g) => g.diff === i + 1).length,
     }));
@@ -232,6 +236,9 @@ export default function App() {
                     <div style={{ fontSize: 16, fontWeight: 600, color: "#F2F5FA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</div>
                     <div style={{ fontSize: 12, color: "#8FA3BF" }}>
                       {g.ach.length} achievements · rarest {Math.min(...g.ach.map((a) => a.pct)).toFixed(1)}% · pool {g.diff * 100} pts
+                      {g.adjust !== 0 && (
+                        <span style={{ color: "#E8B84B" }}> · club adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -261,10 +268,20 @@ export default function App() {
         {scored && !empty && tab === "charts" && (
           <div style={{ display: "grid", gap: 14 }}>
             <div style={S.panel}>
-              <div style={{ ...S.label, marginBottom: 12 }}>Club points over time</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                <div style={S.label}>Club points over time</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[["6", "6 months"], ["12", "Past year"], ["all", "All time"]].map(([k, l]) => (
+                    <button key={k} onClick={() => setRange(k)}
+                      style={{ ...S.btnGhost, ...(range === k ? { color: "#E8B84B", borderColor: "#4A3D18" } : {}) }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {scored.timeline.length ? (
                 <ResponsiveContainer width="100%" height={260}>
-                  <AreaChart data={scored.timeline}>
+                  <AreaChart data={range === "all" ? scored.timeline : scored.timeline.slice(-parseInt(range, 10))}>
                     <CartesianGrid stroke="#232D40" vertical={false} />
                     <XAxis dataKey="month" stroke="#8FA3BF" fontSize={11} />
                     <YAxis stroke="#8FA3BF" fontSize={11} />
@@ -335,14 +352,31 @@ export default function App() {
             </div>
 
             <div style={S.panel}>
-              <div style={{ ...S.label, marginBottom: 12 }}>Tracked games</div>
-              {meta.games.map((g) => (
-                <div key={g.appid} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                  <span style={{ flex: 1, fontSize: 14 }}>{g.name ?? g.appid}</span>
-                  <button style={S.btnGhost} disabled={busy}
-                    onClick={() => mutate("removeGame", { appid: g.appid }, () => `${g.name} removed`)}>Remove</button>
-                </div>
-              ))}
+              <div style={{ ...S.label, marginBottom: 12 }}>Tracked games ({meta.games.length})</div>
+              {meta.games.length > 5 && (
+                <input style={{ ...S.input, marginBottom: 10 }} placeholder="Search games…"
+                  value={gameFilter} onChange={(e) => setGameFilter(e.target.value)} />
+              )}
+              <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
+                {meta.games
+                  .filter((g) => (g.name ?? "").toLowerCase().includes(gameFilter.toLowerCase()))
+                  .map((g) => (
+                    <div key={g.appid} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ flex: 1, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name ?? g.appid}</span>
+                      <span title="Club difficulty adjustment" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) <= -3} aria-label={`Lower ${g.name} difficulty`}
+                          onClick={() => mutate("setAdjust", { appid: g.appid, adjust: (g.adjust ?? 0) - 1 }, (j) => `${g.name} adjustment: ${j.adjust >= 0 ? "+" : ""}${j.adjust}`)}>−</button>
+                        <span style={{ fontSize: 12, fontWeight: 700, width: 24, textAlign: "center", color: (g.adjust ?? 0) !== 0 ? "#E8B84B" : "#44506A" }}>
+                          {(g.adjust ?? 0) > 0 ? `+${g.adjust}` : (g.adjust ?? 0)}
+                        </span>
+                        <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) >= 3} aria-label={`Raise ${g.name} difficulty`}
+                          onClick={() => mutate("setAdjust", { appid: g.appid, adjust: (g.adjust ?? 0) + 1 }, (j) => `${g.name} adjustment: ${j.adjust >= 0 ? "+" : ""}${j.adjust}`)}>+</button>
+                      </span>
+                      <button style={S.btnGhost} disabled={busy}
+                        onClick={() => mutate("removeGame", { appid: g.appid }, () => `${g.name} removed`)}>Remove</button>
+                    </div>
+                  ))}
+              </div>
               <input style={{ ...S.input, marginTop: 6 }} placeholder="Steam store URL or appid"
                 value={newGame} onChange={(e) => setNewGame(e.target.value)} />
               <button style={{ ...S.btn, marginTop: 10 }} disabled={busy || !newGame}
@@ -355,7 +389,7 @@ export default function App() {
               <div style={{ ...S.label, marginBottom: 16 }}>Scoring rules</div>
               <Slider label="100% completion bonus" value={cfg.bonus} min={0} max={0.8} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, bonus: v })} fmt={(v) => `${Math.round(v * 100)}% of pool`} />
-              <Slider label="Rarity steepness" value={cfg.steepness} min={2} max={4} step={0.1}
+              <Slider label="Rarity steepness" value={cfg.steepness} min={2} max={5} step={0.1}
                 onChange={(v) => setCfg({ ...cfg, steepness: v })} fmt={(v) => v.toFixed(1)} />
               <Slider label="Rarest achievement weight" value={cfg.rarestWeight} min={0.3} max={1} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, rarestWeight: v })} fmt={(v) => `${Math.round(v * 100)}%`} />
