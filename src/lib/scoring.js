@@ -1,27 +1,35 @@
 // ---------------------------------------------------------------
-// Scoring engine — runs in the browser so settings sliders
-// recalculate everything live. Mirrors the design documented
-// in the project README.
+// Scoring engine v1.1
+// Changes from v1.0:
+//   - Rarity curve re-anchored: 20% rarity → difficulty 1 (was 50%),
+//     so mid-rare games stop compressing toward the bottom.
+//   - Steeper default steepness (3.5) and higher rarest-achievement
+//     weight (0.85): the rarest achievement's global % is effectively
+//     the ceiling on how many players ever 100% the game.
+//   - difficultyFromRarity accepts a per-game club adjustment
+//     (−3..+3) to correct rarity's blind spots (selection bias:
+//     hard games attract hardcore players, deflating rarity).
 // ---------------------------------------------------------------
 
-export const DEFAULT_SETTINGS = { bonus: 0.4, steepness: 3.0, rarestWeight: 0.65 };
+export const DEFAULT_SETTINGS = { bonus: 0.4, steepness: 3.5, rarestWeight: 0.85 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const FLOOR = 0.05; // clamp global % to avoid log blowups
+const FLOOR = 0.05;   // clamp global % to avoid log blowups
+const ANCHOR = 20;    // rarity % that maps to difficulty 1
 
-/** Difficulty 1–10 from a game's global achievement rarity percentages. */
-export function difficultyFromRarity(pcts, cfg) {
+/** Difficulty 1–10 from global rarity, plus optional club adjustment. */
+export function difficultyFromRarity(pcts, cfg, adjust = 0) {
   const floored = pcts.map((p) => Math.max(p, FLOOR));
   const rarest = Math.min(...floored);
   const geo = Math.exp(floored.reduce((s, p) => s + Math.log(p), 0) / floored.length);
-  const score = (p) => 1 + cfg.steepness * Math.log10(50 / p);
+  const score = (p) => 1 + cfg.steepness * Math.log10(ANCHOR / p);
   const blended = cfg.rarestWeight * score(rarest) + (1 - cfg.rarestWeight) * score(geo);
-  return clamp(Math.round(blended), 1, 10);
+  return clamp(Math.round(blended) + adjust, 1, 10);
 }
 
 /** Point value of each achievement in a game, plus the 100% bonus. */
-export function pointTable(ach, cfg) {
-  const diff = difficultyFromRarity(ach.map((a) => a.pct), cfg);
+export function pointTable(ach, cfg, adjust = 0) {
+  const diff = difficultyFromRarity(ach.map((a) => a.pct), cfg, adjust);
   const pool = diff * 100;
   const earnable = pool * (1 - cfg.bonus);
   const weights = ach.map((a) => 1 / Math.sqrt(Math.max(a.pct, FLOOR)));
@@ -32,11 +40,11 @@ export function pointTable(ach, cfg) {
 
 /**
  * Score one player's progress in one game.
- * @param {{id, name, pct}[]} ach       game's achievements with rarity
- * @param {{id, t}[]} unlocks           player's unlocked achievements
+ * @param {{id, name, pct}[]} ach     game's achievements with rarity
+ * @param {{id, t}[]} unlocks         player's unlocked achievements
  */
-export function scoreGame(ach, unlocks, cfg) {
-  const table = pointTable(ach, cfg);
+export function scoreGame(ach, unlocks, cfg, adjust = 0) {
+  const table = pointTable(ach, cfg, adjust);
   const earned = unlocks.reduce((s, u) => s + (table.per.get(u.id) ?? 0), 0);
   const complete = unlocks.length === ach.length && ach.length > 0;
   const lastUnlock = unlocks.reduce((m, u) => Math.max(m, u.t || 0), 0);
@@ -52,13 +60,12 @@ export function scoreGame(ach, unlocks, cfg) {
 
 /**
  * Cumulative points per player per month, for the timeline chart.
- * Each unlock contributes its point value at its unlock date; the
- * 100% bonus lands at the date of the final unlock.
+ * adjustMap: { [appid]: adjust } so point values match displayed difficulty.
  */
-export function buildTimeline(games, members, cfg) {
-  const events = []; // { sid, t, pts }
+export function buildTimeline(games, members, cfg, adjustMap = {}) {
+  const events = [];
   for (const g of games) {
-    const table = pointTable(g.ach, cfg);
+    const table = pointTable(g.ach, cfg, adjustMap[g.appid] ?? 0);
     for (const [sid, unlocks] of Object.entries(g.players)) {
       for (const u of unlocks) {
         if (u.t) events.push({ sid, t: u.t, pts: table.per.get(u.id) ?? 0 });
