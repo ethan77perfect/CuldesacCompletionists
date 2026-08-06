@@ -1,0 +1,103 @@
+import { useState } from "react";
+import { S, Dial, TierChip, fmtDate } from "./ui.jsx";
+
+export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
+  const g = stats.games.find((x) => x.appid === Number(appid));
+  const [notesDraft, setNotesDraft] = useState(null);
+  if (!g) return <p style={{ color: "#8FA3BF" }}>Game not found — is it still tracked?</p>;
+
+  const members = meta.members.filter((m) => g.players[m.steamid]);
+  const sorted = [...g.ach].sort((a, b) => a.pct - b.pct);
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <Dial value={g.diff} size={56} />
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ ...S.display, fontSize: 28, fontWeight: 700, color: "#F2F5FA" }}>{g.name}</div>
+          <div style={{ fontSize: 13, color: "#8FA3BF" }}>
+            {g.ach.length} achievements · pool {g.pool} pts · rarest {Math.min(...g.ach.map((a) => a.pct)).toFixed(2)}%
+            {g.adjust !== 0 && <span style={{ color: "#E8B84B" }}> · club adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
+            {g.race && <span> · 🏁 race</span>}
+          </div>
+        </div>
+        <button style={S.btnGhost} disabled={busy}
+          onClick={() => mutate("toggleRace", { appid: g.appid, race: !g.race }, () => g.race ? "Race ended" : `${g.name} is now a race! First 100% wins.`)}>
+          {g.race ? "End race" : "Make it a race"}
+        </button>
+      </div>
+
+      <div style={S.panel}>
+        <div style={{ ...S.label, marginBottom: 8 }}>Club notes</div>
+        <textarea style={{ ...S.input, minHeight: 70, resize: "vertical", fontFamily: "inherit" }}
+          placeholder="Tips for the club — missables, order, warnings…"
+          value={notesDraft ?? g.notes}
+          onChange={(e) => setNotesDraft(e.target.value)} />
+        {notesDraft !== null && notesDraft !== g.notes && (
+          <button style={{ ...S.btn, marginTop: 8 }} disabled={busy}
+            onClick={() => mutate("setNotes", { appid: g.appid, notes: notesDraft }, () => "Notes saved").then(() => setNotesDraft(null))}>
+            Save notes
+          </button>
+        )}
+      </div>
+
+      <div style={{ ...S.panel, overflowX: "auto" }}>
+        <div style={{ ...S.label, marginBottom: 12 }}>Achievements — rarest first</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: "#8FA3BF" }}>
+              <th style={{ padding: "6px 8px" }}>Achievement</th>
+              <th style={{ padding: "6px 8px" }}>Rarity</th>
+              <th style={{ padding: "6px 8px", textAlign: "right" }}>Pts</th>
+              {members.map((m) => (
+                <th key={m.steamid} style={{ padding: "6px 8px", color: m.color, textAlign: "center" }}>{m.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((a) => {
+              const pts = Math.round(g.table.per.get(a.id) ?? 0);
+              return (
+                <tr key={a.id} style={{ borderTop: "1px solid #232D40" }}>
+                  <td style={{ padding: "7px 8px" }}>{a.name}</td>
+                  <td style={{ padding: "7px 8px" }}><TierChip pct={a.pct} /></td>
+                  <td style={{ padding: "7px 8px", textAlign: "right", color: "#E8B84B", fontWeight: 600 }}>{pts}</td>
+                  {members.map((m) => {
+                    const u = g.players[m.steamid].unlocks.find((x) => x.id === a.id);
+                    return (
+                      <td key={m.steamid} style={{ padding: "7px 8px", textAlign: "center" }}
+                        title={u?.t ? fmtDate(u.t) : "Not unlocked"}>
+                        {u ? "✓" : <span style={{ color: "#2C3852" }}>—</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+        {members.map((m) => {
+          const r = g.players[m.steamid];
+          const hours = statsHours(stats, m.steamid, g.appid);
+          return (
+            <div key={m.steamid} style={S.panel}>
+              <a style={{ ...S.link, fontWeight: 600, fontSize: 15 }} onClick={() => nav(`/player/${m.steamid}`)}>{m.name}</a>
+              <div style={{ fontSize: 13, color: "#8FA3BF", marginTop: 6 }}>
+                {r.complete ? `★ 100% on ${fmtDate(r.lastUnlock)}` : `${r.pct}% · ${r.missing.length} to go`}
+                <br />{Math.round(r.basePoints)} pts{hours != null && <> · {hours}h played</>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function statsHours(stats, sid, appid) {
+  const min = stats.profilesPlaytime?.[sid]?.[appid];
+  return min ? Math.round(min / 6) / 10 : null;
+}
