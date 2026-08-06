@@ -48,6 +48,8 @@ export default function App() {
   const [libSearch, setLibSearch] = useState("");
   const [boardMode, setBoardMode] = useState("all");
 
+  const [loadProgress, setLoadProgress] = useState(null);
+
   async function loadAll() {
     setError("");
     try {
@@ -58,17 +60,39 @@ export default function App() {
       setSavedSettings(metaJson.settings ?? {});
       setCfg({ ...DEFAULT_SETTINGS, ...metaJson.settings });
 
-      if (metaJson.members.length && metaJson.games.length) {
-        const sids = metaJson.members.map((m) => m.steamid).join(",");
-        const aids = metaJson.games.map((g) => g.appid).join(",");
-        const clubRes = await fetch(`/api/club?steamids=${sids}&appids=${aids}`);
-        const clubJson = await clubRes.json();
-        if (!clubRes.ok) throw new Error(clubJson.error);
-        setClubData(clubJson);
-      } else {
+      if (!metaJson.members.length || !metaJson.games.length) {
         setClubData({ games: [], profiles: {} });
+        return;
       }
+
+      // Load in small batches so big clubs don't trip Steam rate limits.
+      const sids = metaJson.members.map((m) => m.steamid).join(",");
+      const appids = metaJson.games.map((g) => g.appid);
+      const BATCH = 12;
+      const chunks = [];
+      for (let i = 0; i < appids.length; i += BATCH) chunks.push(appids.slice(i, i + BATCH));
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      let games = [], profiles = {};
+      for (let ci = 0; ci < chunks.length; ci++) {
+        setLoadProgress({ done: ci, total: chunks.length });
+        const url = `/api/club?steamids=${sids}&appids=${chunks[ci].join(",")}&profiles=${ci === 0 ? 1 : 0}`;
+        let j = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const r = await fetch(url);
+          const body = await r.json();
+          if (!r.ok) throw new Error(body.error);
+          j = body;
+          if (!j.failed) break;          // clean batch
+          await sleep(2500 * (attempt + 1)); // Steam throttled us — cool off, retry batch
+        }
+        games = games.concat(j.games);
+        Object.assign(profiles, j.profiles ?? {});
+        setClubData({ games: [...games], profiles: { ...profiles } }); // progressive render
+      }
+      setLoadProgress(null);
     } catch (e) {
+      setLoadProgress(null);
       setError(e.message || "Something went wrong loading club data");
     }
   }
@@ -135,6 +159,14 @@ export default function App() {
         )}
         {notice && (
           <div style={{ ...S.panel, borderColor: "#4A3D18", background: "#1E1A0E", marginBottom: 14, fontSize: 13, color: "#E8B84B" }}>{notice}</div>
+        )}
+        {loadProgress && (
+          <div style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "#8FA3BF", display: "flex", alignItems: "center", gap: 12 }}>
+            <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
+            <div style={{ flex: 1, background: "#232D40", borderRadius: 3, height: 6 }}>
+              <div style={{ width: `${(loadProgress.done / Math.max(loadProgress.total, 1)) * 100}%`, background: "#E8B84B", height: 6, borderRadius: 3, transition: "width .3s" }} />
+            </div>
+          </div>
         )}
         {!meta && !error && <div style={{ color: "#8FA3BF", padding: 40, textAlign: "center" }}>Loading the club…</div>}
         {meta && !clubData && !error && <div style={{ color: "#8FA3BF", padding: 40, textAlign: "center" }}>Pulling achievements from Steam…</div>}
