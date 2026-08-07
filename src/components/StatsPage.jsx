@@ -46,7 +46,7 @@ export default function StatsPage({ stats, nav }) {
       </div>
 
       <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity — hard-earned sinks lower</div>
+        <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity</div>
         <ResponsiveContainer width="100%" height={300}>
           <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
             <CartesianGrid stroke="#232D40" />
