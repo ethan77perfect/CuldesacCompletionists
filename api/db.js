@@ -130,7 +130,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
       case "setAdjust": {
-        const adjust = Math.max(-3, Math.min(3, parseInt(body.adjust, 10) || 0));
+        const adjust = Math.max(-9, Math.min(9, parseInt(body.adjust, 10) || 0));
         const { error } = await supabase.from("games").update({ adjust }).eq("appid", body.appid);
         if (error) return fail(500, error.message);
         return res.status(200).json({ ok: true, adjust });
