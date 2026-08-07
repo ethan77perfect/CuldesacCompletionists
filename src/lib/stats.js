@@ -217,12 +217,20 @@ export function buildClubStats(clubData, meta, settings) {
     biggestUnlock,
   };
 
-  // ---- recommendations: remaining effort = sum 1/pct of missing ----
+  // ---- recommendations: "closest finish" = remaining effort ÷ progress ----
+  // remaining: rarity-weighted work left (√ tames extreme outliers)
+  // progress: rarity-weighted fraction already done — dividing by it means
+  // a 95%-done game beats a barely-started one even if the barely-started
+  // game's achievements are individually common (the Elden Ring problem).
   const recs = [];
   for (const g of games) {
+    const wOf = (a) => 1 / Math.sqrt(Math.max(a.pct, 0.05));
+    const totalW = g.ach.reduce((s, a) => s + wOf(a), 0);
     for (const [sid, r] of Object.entries(g.players)) {
       if (r.unlocks.length === 0 || r.complete) continue;
-      const effort = r.missing.reduce((s, a) => s + 1 / Math.max(a.pct, 0.05), 0);
+      const remaining = r.missing.reduce((s, a) => s + wOf(a), 0);
+      const progress = Math.max((totalW - remaining) / totalW, 0.05);
+      const effort = remaining / progress;
       const ptsLeft = Math.round(g.pool - r.basePoints);
       recs.push({ sid, appid: g.appid, name: g.name, diff: g.diff, pct: r.pct, missingCount: r.missing.length, effort, ptsLeft });
     }
