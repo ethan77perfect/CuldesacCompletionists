@@ -1,3 +1,24 @@
+// ---------------------------------------------------------------
+// ui.jsx — shared building blocks used by every page.
+//
+// S is the "design system": one object of reusable inline styles.
+// Change a color/font here and it changes everywhere. (Inline
+// styles instead of a CSS file = everything for a component lives
+// in one place; the tradeoff is no pseudo-selectors like :hover,
+// which is why App.jsx has a tiny <style> block for those.)
+//
+// Components here follow the standard React shape: a function
+// taking a single "props" object (destructured in the signature)
+// and returning JSX — the HTML-looking syntax that compiles to
+// DOM elements. {curly braces} inside JSX switch back to JS.
+//
+// Dial      — the 10-notch difficulty gauge (hand-built SVG)
+// Slider    — labeled range input used by the settings page
+// TierChip  — colored rarity pill (Common → Mythic)
+// Avatar    — Steam avatar with member-color border
+// PctBar    — thin progress bar
+// fmtDate / fmtDays / timeAgo — date formatting helpers
+// ---------------------------------------------------------------
 import { tierOf } from "../lib/stats.js";
 
 export const diffColor = (d) => (d <= 3 ? "#5CB8A6" : d <= 6 ? "#E8B84B" : d <= 8 ? "#E0824B" : "#E05B5B");

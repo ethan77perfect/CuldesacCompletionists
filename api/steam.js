@@ -1,4 +1,8 @@
 // ---------------------------------------------------------------
+// NOTE: legacy debugging proxy — the site itself no longer calls
+// this (it uses /api/club + /api/db). Kept because it is handy for
+// poking individual Steam endpoints in the browser. Safe to delete.
+// ---------------------------------------------------------------
 // /api/steam — one serverless proxy for every Steam Web API call.
 // Keeps STEAM_API_KEY server-side and adds CDN caching so the
 // club doesn't burn through Steam's 100k calls/day limit.

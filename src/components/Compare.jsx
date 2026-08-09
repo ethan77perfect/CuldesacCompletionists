@@ -1,3 +1,13 @@
+// ---------------------------------------------------------------
+// Compare.jsx — head-to-head page ("#/compare").
+//
+// Local state: a and b (the two selected steamids) and gapGame
+// (which shared game's gap analysis is expanded). "Leads" per
+// game = higher completion %, tiebroken by earlier finish date
+// when both are at 100%. The W/L tally counts per-game leads.
+// The gap analysis lists achievements only one player has, by
+// filtering one player's unlocks against the other's.
+// ---------------------------------------------------------------
 import { useState } from "react";
 import { S, Dial, Avatar, PctBar, TierChip } from "./ui.jsx";
 

@@ -1,3 +1,17 @@
+// ---------------------------------------------------------------
+// GameDetail.jsx — one game's page ("#/game/<appid>").
+//
+// Props: stats (computed data), appid (from the URL), meta (raw
+// DB rows — members/games), mutate (function that POSTs to
+// /api/db and reloads), busy (true while a mutation is running),
+// nav (page navigation).
+//
+// The notes box uses a "draft" pattern: notesDraft starts null
+// (meaning "no local edits, show the saved value") and becomes a
+// string once you type. The Save button only appears when the
+// draft differs from what's saved — a common React idiom for
+// edit-in-place fields.
+// ---------------------------------------------------------------
 import { useState } from "react";
 import { S, Dial, TierChip, fmtDate } from "./ui.jsx";
 

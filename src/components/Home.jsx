@@ -1,3 +1,17 @@
+// ---------------------------------------------------------------
+// Home.jsx — the landing page ("#/home").
+//
+// Receives two props from App.jsx:
+//   stats — the fully-computed club object from lib/stats.js
+//           (this component does NO math; it only renders)
+//   nav   — function to change page, e.g. nav(`/game/123`)
+//
+// Sections: club totals strip, activity feed (stats.feed),
+// monthly challenge (stats.challenge), races (stats.races),
+// and the closest-finishes widget (stats.recs top 5).
+// To change what the feed shows, edit stats.js (the data),
+// not this file (the display).
+// ---------------------------------------------------------------
 import { S, Dial, Avatar, TierChip, timeAgo } from "./ui.jsx";
 
 export default function Home({ stats, nav }) {

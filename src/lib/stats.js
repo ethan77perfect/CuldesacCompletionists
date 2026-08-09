@@ -12,6 +12,8 @@ const monthKey = (t) => {
   const d = new Date(t * 1000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
+// ISO-8601 week label ("2026-W31") — used for streak tracking. The
+// UTC+Thursday dance is the standard trick for ISO week numbering.
 const isoWeek = (t) => {
   const d = new Date(t * 1000);
   const day = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -26,6 +28,8 @@ export const quarterOf = (date = new Date()) =>
 const quarterStart = (date = new Date()) =>
   new Date(date.getFullYear(), Math.floor(date.getMonth() / 3) * 3, 1).getTime() / 1000;
 
+// Rarity tier table — first row whose `min` the percentage meets wins.
+// Reorder/rename/recolor freely; TierChip in ui.jsx renders these.
 export const RARITY_TIERS = [
   { min: 20, name: "Common", color: "#8FA3BF" },
   { min: 8, name: "Uncommon", color: "#5CB8A6" },
@@ -75,7 +79,12 @@ export function buildClubStats(clubData, meta, settings) {
     };
   });
 
-  // ---- events (unlocks + completions + first blood) ----
+  // ---- events: the timeline backbone ----
+  // Everything time-based (feed, charts, seasons, streaks, records)
+  // is built from this one flat list. Each unlock becomes an event
+  // carrying its point value; each 100% adds a completion-bonus
+  // event; the earliest unlocker of each achievement gets the
+  // first-blood multiplier folded into their unlock event.
   const events = []; // { sid, appid, gameName, t, pts, kind, achId?, achName?, pct? }
   for (const g of games) {
     // first blood: earliest unlocker of each achievement gets a bonus
@@ -238,6 +247,10 @@ export function buildClubStats(clubData, meta, settings) {
   recs.sort((a, b) => a.effort - b.effort);
 
   // ---- badges ----
+  // TO ADD A BADGE: add one line here — [display name, test function].
+  // The test receives a perPlayer object (see fields assembled above:
+  // points, perfects, spans, streak, rarestUnlock, hardestClear...).
+  // That's it; player pages render whatever this list produces.
   const badgeDefs = [
     ["First Perfect", (p) => p.perfects >= 1],
     ["Shelf of Five", (p) => p.perfects >= 5],

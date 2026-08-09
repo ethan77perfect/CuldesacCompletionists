@@ -1,3 +1,13 @@
+// ---------------------------------------------------------------
+// StatsPage.jsx — deep-cuts page ("#/stats"): records, hall of
+// fame, the rarity scatter plot, velocity, and the graveyard.
+//
+// The scatter is recharts with two notable settings: the Y axis
+// is log-scale (rarity spans 100% down to 0.05%, linear would
+// squash everything) and reversed (rare = LOW on the chart, so
+// hard-earned unlocks visually "sink"). One <Scatter> series per
+// member gives each their color.
+// ---------------------------------------------------------------
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { S, TierChip, fmtDays, fmtDate } from "./ui.jsx";
 
@@ -46,7 +56,7 @@ export default function StatsPage({ stats, nav }) {
       </div>
 
       <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity</div>
+        <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity — hard-earned sinks lower</div>
         <ResponsiveContainer width="100%" height={300}>
           <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
             <CartesianGrid stroke="#232D40" />

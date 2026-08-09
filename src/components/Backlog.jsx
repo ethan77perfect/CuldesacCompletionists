@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------
+// Backlog.jsx — proposal + voting page ("#/backlog").
+//
+// Votes are stored per game as a JSON array of steamids in the
+// backlog table; voting toggles your id in/out of that array
+// (see the voteBacklog op in api/db.js). The "voting as"
+// dropdown is honor-system by design — real identity would
+// need Steam sign-in, which is a future upgrade.
+// ---------------------------------------------------------------
 import { useState } from "react";
 import { S } from "./ui.jsx";
 

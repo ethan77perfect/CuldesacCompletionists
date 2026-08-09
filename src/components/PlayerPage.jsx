@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------
+// PlayerPage.jsx — one member's profile ("#/player/<steamid>").
+//
+// Everything shown here was precomputed in lib/stats.js and lives
+// on stats.perPlayer[sid]: points, badges, streaks, spans, etc.
+// The one bit of logic done locally is the "completion
+// personality" label — tweak its thresholds freely; it's flavor.
+// ---------------------------------------------------------------
 import { S, Dial, Avatar, TierChip, fmtDays, fmtDate } from "./ui.jsx";
 
 export default function PlayerPage({ stats, sid, nav }) {

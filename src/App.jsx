@@ -1,3 +1,24 @@
+// ---------------------------------------------------------------
+// App.jsx — the shell. This file owns three jobs:
+//
+//   1. DATA. It fetches everything (loadAll), holds it in React
+//      state, and hands it down to page components as props.
+//      Components never fetch; they only render what they're given.
+//   2. ROUTING. useRoute() reads the URL hash (#/game/123) and
+//      decides which page component to show.
+//   3. FOUR INLINE PAGES. Leaderboard, Library, Charts, and
+//      Settings are small enough that they live right here
+//      instead of separate files.
+//
+// React mental model (for the embedded-brained): components are
+// functions that re-run whenever their state changes. useState
+// gives you a [value, setter] pair; calling the setter re-renders.
+// There is no manual "update the screen" step — you change state,
+// React re-runs the function, and the returned JSX diff is applied
+// to the DOM. Think of it as an event loop where state writes are
+// the interrupts.
+// ---------------------------------------------------------------
+
 import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis,
@@ -13,7 +34,14 @@ import Compare from "./components/Compare.jsx";
 import StatsPage from "./components/StatsPage.jsx";
 import Backlog from "./components/Backlog.jsx";
 
-// ---- tiny hash router: "#/game/123" → ["game", "123"] ----
+// ---- tiny hash router ----
+// The URL hash ("#/game/123") is our page address. Why hash instead
+// of real paths (/game/123)? Because this is a static site: Vercel
+// serves index.html for "/" only, and a hard refresh on /game/123
+// would 404. The hash is never sent to the server, so every page
+// works on refresh with zero server config. useRoute() parses the
+// hash into ["game", "123"] and re-renders on the "hashchange"
+// browser event. nav("/game/123") just writes the hash.
 function useRoute() {
   const [hash, setHash] = useState(window.location.hash);
   useEffect(() => {
@@ -34,6 +62,15 @@ const NAV = [
 
 export default function App() {
   const [page, param, nav] = useRoute();
+
+  // ---- state ----
+  // meta      : raw DB rows from /api/db (members, games, settings, backlog)
+  // clubData  : raw Steam data from /api/club (achievements, unlocks, profiles)
+  // cfg       : the LIVE scoring knobs — sliders edit this, everything
+  //             recomputes instantly; "Save as club rules" persists it
+  // clubKey   : the shared edit password, mirrored to localStorage so
+  //             it survives refreshes
+  // busy      : true while a mutation is in flight (disables buttons)
   const [meta, setMeta] = useState(null);
   const [clubData, setClubData] = useState(null);
   const [cfg, setCfg] = useState(DEFAULT_SETTINGS);
@@ -98,6 +135,11 @@ export default function App() {
   }
   useEffect(() => { loadAll(); }, []);
 
+  // ---- mutate: the one door for every write ----
+  // POSTs { op, clubKey, ...body } to /api/db, shows the result as a
+  // notice or error, then calls loadAll() so the screen reflects the
+  // database. successMsg is a function because some messages need the
+  // server's response (e.g. the resolved game name).
   async function mutate(op, body, successMsg) {
     setBusy(true); setError(""); setNotice("");
     try {
@@ -118,6 +160,11 @@ export default function App() {
     }
   }
 
+  // ---- the big recompute ----
+  // useMemo caches a computed value and only re-runs the function when
+  // a dependency (the [meta, clubData, cfg] array) changes. This is why
+  // the settings sliders feel live: dragging one changes cfg, which
+  // re-runs buildClubStats over data already in memory — no network.
   const stats = useMemo(
     () => (meta && clubData ? buildClubStats(clubData, meta, cfg) : null),
     [meta, clubData, cfg]
@@ -179,6 +226,11 @@ export default function App() {
           </div>
         )}
 
+        {/* ---- page switch ----
+            Each line is: "if we're on page X and data is ready, render
+            component X". The `stats && !empty &&` guards stop pages from
+            rendering before data exists. To add a page: add an entry to
+            NAV above, add a line here, create the component. */}
         {stats && !empty && page === "home" && <Home stats={stats} nav={nav} />}
         {stats && !empty && page === "game" && <GameDetail stats={stats} appid={param} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "player" && <PlayerPage stats={stats} sid={param} nav={nav} />}
