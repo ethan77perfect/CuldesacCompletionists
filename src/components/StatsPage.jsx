@@ -11,11 +11,13 @@
 import { useState } from "react";
 import { AreaChart, Area, BarChart, Bar, Cell, Legend, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { diffColor } from "./ui.jsx";
+import { chartInk } from "../lib/themes.js";
 import { S, TierChip, fmtDays, fmtDate } from "./ui.jsx";
 
 export default function StatsPage({ stats, nav, members }) {
   const { records, hallOfFame, graveyard, byId, scatter, board } = stats;
   const [range, setRange] = useState("12");
+  const ink = chartInk();   // live theme colors for SVG chart attributes
   const name = (sid) => byId[sid]?.name ?? "?";
   const color = (sid) => byId[sid]?.color ?? "var(--muted)";
 
@@ -42,9 +44,9 @@ export default function StatsPage({ stats, nav, members }) {
         {stats.timeline.length ? (
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={range === "all" ? stats.timeline : stats.timeline.slice(-parseInt(range, 10))}>
-              <CartesianGrid stroke="#232D40" vertical={false} />
-              <XAxis dataKey="month" stroke="#8FA3BF" fontSize={11} />
-              <YAxis stroke="#8FA3BF" fontSize={11} />
+              <CartesianGrid stroke={ink.grid} vertical={false} />
+              <XAxis dataKey="month" stroke={ink.axis} fontSize={11} />
+              <YAxis stroke={ink.axis} fontSize={11} />
               <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }} />
               <Legend />
               {members.map((m) => (
@@ -59,9 +61,9 @@ export default function StatsPage({ stats, nav, members }) {
         <div style={{ ...S.label, marginBottom: 12 }}>Library by difficulty</div>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={stats.histogram}>
-            <CartesianGrid stroke="#232D40" vertical={false} />
-            <XAxis dataKey="diff" stroke="#8FA3BF" fontSize={11} />
-            <YAxis allowDecimals={false} stroke="#8FA3BF" fontSize={11} />
+            <CartesianGrid stroke={ink.grid} vertical={false} />
+            <XAxis dataKey="diff" stroke={ink.axis} fontSize={11} />
+            <YAxis allowDecimals={false} stroke={ink.axis} fontSize={11} />
             <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }} />
             <Bar dataKey="games" radius={[4, 4, 0, 0]}>
               {stats.histogram.map((h) => <Cell key={h.diff} fill={diffColor(h.diff)} />)}
@@ -103,10 +105,10 @@ export default function StatsPage({ stats, nav, members }) {
         <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity — hard-earned sinks lower</div>
         <ResponsiveContainer width="100%" height={300}>
           <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-            <CartesianGrid stroke="#232D40" />
-            <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} stroke="#8FA3BF" fontSize={11}
+            <CartesianGrid stroke={ink.grid} />
+            <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} stroke={ink.axis} fontSize={11}
               tickFormatter={(t) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" })} />
-            <YAxis dataKey="pct" type="number" scale="log" domain={[0.05, 100]} stroke="#8FA3BF" fontSize={11}
+            <YAxis dataKey="pct" type="number" scale="log" domain={[0.05, 100]} stroke={ink.axis} fontSize={11}
               tickFormatter={(v) => `${v}%`} reversed />
             <ZAxis range={[24, 24]} />
             <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }}

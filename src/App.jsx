@@ -36,7 +36,7 @@ import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
-import { THEMES, SURFACES, DEFAULT_THEME, DEFAULT_SURFACE, applyTheme, applySurface } from "./lib/themes.js";
+import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
 
 // ---- tiny hash router ----
 // The URL hash ("#/game/123") is our page address. Why hash instead
@@ -91,7 +91,8 @@ export default function App() {
   const [boardMode, setBoardMode] = useState("all");
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? DEFAULT_THEME);
   const [surface, setSurface] = useState(() => localStorage.getItem("surface") ?? DEFAULT_SURFACE);
-  useEffect(() => { applyTheme(theme); }, [theme]);
+  const [colorMode, setColorMode] = useState(() => localStorage.getItem("mode") ?? DEFAULT_MODE);
+  useEffect(() => { applyTheme(theme, colorMode); }, [theme, colorMode]);
   useEffect(() => { applySurface(surface); }, [surface]);
 
   const [loadProgress, setLoadProgress] = useState(null);
@@ -198,6 +199,8 @@ export default function App() {
         body, .panel-hover { transition: background .25s, border-color .25s, color .25s; }
         .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
         .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+        [data-mode="light"] .card-lift:hover { box-shadow: 0 6px 16px rgba(40,35,25,.14); }
+        [data-mode="light"] [data-surface="glass"] .panel, [data-mode="light"][data-surface="glass"] .panel { background: color-mix(in srgb, var(--panel) 62%, transparent) !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
@@ -452,6 +455,14 @@ export default function App() {
 
             <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Theme</div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {Object.entries(MODES).map(([id, label]) => (
+                  <button key={id} onClick={() => setColorMode(id)}
+                    style={{ ...S.btnGhost, ...(colorMode === id ? { color: "var(--accent)", borderColor: "var(--accent-border)", fontWeight: 700 } : {}) }}>
+                    {id === "dark" ? "🌙 " : "☀️ "}{label}
+                  </button>
+                ))}
+              </div>
               <div style={{ display: "grid", gap: 8 }}>
                 {Object.entries(THEMES).map(([id, t]) => (
                   <label key={id} style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer", fontSize: 14 }}>
@@ -459,7 +470,7 @@ export default function App() {
                       style={{ accentColor: "var(--accent)" }} />
                     <span style={{ display: "flex", gap: 3 }}>
                       {["--bg", "--panel", "--accent"].map((v) => (
-                        <span key={v} style={{ width: 14, height: 14, borderRadius: 4, background: t.vars[v], border: "1px solid var(--border2)" }} />
+                        <span key={v} style={{ width: 14, height: 14, borderRadius: 4, background: (t[colorMode] ?? t.dark)[v], border: "1px solid var(--border2)" }} />
                       ))}
                     </span>
                     <span style={{ fontWeight: theme === id ? 700 : 400, color: theme === id ? "var(--accent)" : "var(--ink)" }}>{t.label}</span>

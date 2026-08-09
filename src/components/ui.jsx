@@ -44,13 +44,15 @@ export function Dial({ value, size = 44 }) {
       <line key={i}
         x1={cx + rI * Math.cos(a)} y1={cy - rI * Math.sin(a)}
         x2={cx + rO * Math.cos(a)} y2={cy - rO * Math.sin(a)}
-        stroke={i < value ? diffColor(value) : "#2A3447"} strokeWidth="3" strokeLinecap="round" />
+        style={{ stroke: i < value ? `color-mix(in srgb, ${diffColor(value)} calc(100% - var(--sem-darken, 0%)), #1A1A1A)` : "var(--border2)" }}
+        strokeWidth="3" strokeLinecap="round" />
     );
   }
   return (
     <svg width={size} height={size} style={{ flexShrink: 0 }} aria-label={`Difficulty ${value} of 10`}>
       {notches}
-      <text x={cx} y={cy + 5} textAnchor="middle" fill={diffColor(value)} fontSize="14"
+      <text x={cx} y={cy + 5} textAnchor="middle" fontSize="14"
+        style={{ fill: `color-mix(in srgb, ${diffColor(value)} calc(100% - var(--sem-darken, 0%)), #1A1A1A)` }}
         fontWeight="700" fontFamily="'Barlow Condensed', sans-serif">{value}</text>
     </svg>
   );
@@ -73,8 +75,10 @@ export function Slider({ label, value, min, max, step, onChange, fmt }) {
 export function TierChip({ pct }) {
   const t = tierOf(pct);
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, color: t.color, border: `1px solid ${t.color}44`,
-      background: `${t.color}18`, borderRadius: 12, padding: "1px 7px", whiteSpace: "nowrap" }}>
+    <span style={{ fontSize: 10, fontWeight: 700,
+      color: `color-mix(in srgb, ${t.color} calc(100% - var(--sem-darken, 0%)), #1A1A1A)`,
+      border: `1px solid ${t.color}55`, background: `${t.color}1E`,
+      borderRadius: 12, padding: "1px 7px", whiteSpace: "nowrap" }}>
       {t.name} · {pct.toFixed(pct < 1 ? 2 : 1)}%
     </span>
   );
