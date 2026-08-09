@@ -200,6 +200,9 @@ export default function App() {
         .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
         .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
         [data-mode="light"] .card-lift:hover { box-shadow: 0 6px 16px rgba(40,35,25,.14); }
+        @keyframes pointer-kick { 0% { transform: translateX(-50%) rotate(0); } 35% { transform: translateX(-50%) rotate(10deg); } 100% { transform: translateX(-50%) rotate(0); } }
+        .wheel-pointer { transform: translateX(-50%); animation: pointer-kick .12s ease-out; }
+        @media (prefers-reduced-motion: reduce) { .wheel-pointer { animation: none; } }
         [data-mode="light"] [data-surface="glass"] .panel, [data-mode="light"][data-surface="glass"] .panel { background: color-mix(in srgb, var(--panel) 62%, transparent) !important; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-track { background: var(--bg); }

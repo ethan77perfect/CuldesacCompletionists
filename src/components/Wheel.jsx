@@ -1,18 +1,21 @@
 // ---------------------------------------------------------------
 // Wheel.jsx — the wheel of fate ("#/wheel").
 //
-// Two modes:
-//   personal — slices are YOUR unfinished games, weighted toward the
-//              ones you're closest to finishing; accepting binds a
-//              1.5× contract on that game for you.
-//   public   — every tracked game, equal slices; accepting (club key
-//              required, it affects everyone) posts a 2× bounty for
-//              the whole club.
-// The spin animation is CSS rotation with easing; the winning slice
-// is chosen by weight FIRST, then the wheel is rotated to land on it
-// (the honest way to do a weighted wheel).
+// v3.3 mechanics:
+//  - The spin is driven by JavaScript (requestAnimationFrame) with a
+//    friction curve: theta(t) = total · (1 − (1−t)⁴). Fast launch,
+//    long real-wheel decay, randomized duration and landing point.
+//    Because JS owns the angle every frame, the UI can TRACK the spin:
+//  - The drum readout ("under the pointer") shows the current slice
+//    big and lit with neighbors curving away in 3D perspective —
+//    Price-is-Right style — flickering through names as slices pass.
+//    This is the readability answer for the 80-slice public wheel.
+//  - Labels curve along the rim (SVG textPath), flipped on the bottom
+//    half so they never read upside down; slivers get tooltips + the
+//    drum instead.
+//  - The pointer kicks on every slice boundary.
 // ---------------------------------------------------------------
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { S, Dial } from "./ui.jsx";
 
 const SLICE_COLORS = ["#5CB8A6", "#7FB4E6", "#B48CE0", "#E0824B", "#E05B5B", "#E8B84B", "#6BC46D", "#D97BB6"];
@@ -27,11 +30,14 @@ function pickWeighted(items) {
 export default function Wheel({ stats, meta, mutate, busy, nav }) {
   const [mode, setMode] = useState("personal");
   const [spinner, setSpinner] = useState(meta.members[0]?.steamid ?? "");
-  const [rotation, setRotation] = useState(0);
-  const [result, setResult] = useState(null);   // slice landed on, pending accept
+  const [result, setResult] = useState(null);
   const [spinning, setSpinning] = useState(false);
+  const [current, setCurrent] = useState(0);   // slice index under the pointer
+  const [tick, setTick] = useState(0);         // increments per boundary → pointer kick
+  const gRef = useRef(null);                   // rotating <g>; mutated per frame (no re-render)
+  const rotRef = useRef(0);
+  const rafRef = useRef(null);
 
-  // ---- build slices ----
   const slices = useMemo(() => {
     if (mode === "public") {
       return stats.games.map((g, i) => ({
@@ -39,42 +45,92 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         color: SLICE_COLORS[i % SLICE_COLORS.length],
       }));
     }
-    // personal: unfinished games with progress, weighted by closeness
-    // (1/effort from the recommender = closer → fatter slice); games
-    // you haven't started get a sliver so the wheel can surprise you.
-    const mine = stats.games
+    return stats.games
       .filter((g) => !g.players[spinner]?.complete)
       .map((g, i) => {
         const rec = stats.recs.find((r) => r.sid === spinner && r.appid === g.appid);
-        return {
-          appid: g.appid, name: g.name, diff: g.diff,
+        return { appid: g.appid, name: g.name, diff: g.diff,
           weight: rec ? 100 / rec.effort : 0.5,
-          color: SLICE_COLORS[i % SLICE_COLORS.length],
-        };
+          color: SLICE_COLORS[i % SLICE_COLORS.length] };
       });
-    return mine;
   }, [mode, spinner, stats]);
 
   const totalW = slices.reduce((s, x) => s + x.weight, 0);
 
-  // ---- geometry (viewBox coordinates; rendered size is responsive) ----
-  const VB = 400, C = VB / 2;               // viewBox + center
-  const R_RIM = 188, R_SLICE = 176, R_HUB = 54;
+  // ---- geometry (viewBox coords; rendered size is responsive) ----
+  const VB = 400, C = VB / 2;
+  const R_RIM = 188, R_SLICE = 176, R_HUB = 54, R_LABEL = 158;
+
+  // slice paths + curved label arcs + boundary dots + [start, sweep] table
+  const built = useMemo(() => {
+    let angle = 0;
+    return slices.map((s, idx) => {
+      const sweep = (s.weight / totalW) * 360;
+      const a0 = (angle - 90) * Math.PI / 180, a1 = (angle + sweep - 90) * Math.PI / 180;
+      const large = sweep > 180 ? 1 : 0;
+      const d = `M ${C} ${C} L ${C + R_SLICE * Math.cos(a0)} ${C + R_SLICE * Math.sin(a0)} A ${R_SLICE} ${R_SLICE} 0 ${large} 1 ${C + R_SLICE * Math.cos(a1)} ${C + R_SLICE * Math.sin(a1)} Z`;
+
+      // curved label: an arc near the rim; bottom-half slices get the arc
+      // drawn in reverse so the text stays upright
+      let label = null;
+      const mid = angle + sweep / 2;
+      if (sweep >= 10) {
+        const pad = Math.min(4, sweep * 0.12);
+        const flip = mid > 90 && mid < 270;
+        const s0 = (angle + pad - 90) * Math.PI / 180, s1 = (angle + sweep - pad - 90) * Math.PI / 180;
+        const P = (r, a) => `${C + r * Math.cos(a)} ${C + r * Math.sin(a)}`;
+        const arc = flip
+          ? `M ${P(R_LABEL, s1)} A ${R_LABEL} ${R_LABEL} 0 ${large} 0 ${P(R_LABEL, s0)}`
+          : `M ${P(R_LABEL, s0)} A ${R_LABEL} ${R_LABEL} 0 ${large} 1 ${P(R_LABEL, s1)}`;
+        const fs = sweep > 26 ? 13 : sweep > 16 ? 11.5 : 10;
+        const arcLen = ((sweep - 2 * pad) * Math.PI / 180) * R_LABEL;
+        const maxChars = Math.floor(arcLen / (fs * 0.62));
+        const text = s.name.length > maxChars ? s.name.slice(0, Math.max(1, maxChars - 1)) + "…" : s.name;
+        label = { arc, fs, text, id: `arc-${mode}-${s.appid}`, dy: flip ? fs * 0.7 : 0 };
+      }
+      const b = (angle - 90) * Math.PI / 180;
+      const dot = { x: C + R_RIM * Math.cos(b), y: C + R_RIM * Math.sin(b) };
+      const out = { ...s, idx, d, label, dot, start: angle, sweep };
+      angle += sweep;
+      return out;
+    });
+  }, [slices, totalW, mode]);
+
+  // which slice sits under the top pointer at a given rotation
+  const sliceAt = (rot) => {
+    const w = ((360 - (rot % 360)) + 360) % 360;
+    for (const s of built) if (w >= s.start && w < s.start + s.sweep) return s.idx;
+    return built.length - 1;
+  };
+
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+  useEffect(() => { setResult(null); setCurrent(sliceAt(rotRef.current)); }, [built]);
 
   function spin() {
-    if (!slices.length || spinning) return;
-    const winner = pickWeighted(slices);
-    // land at a RANDOM point inside the winning slice (not dead center)
-    let acc = 0, landing = 0;
-    for (const s of slices) {
-      const sweep = (s.weight / totalW) * 360;
-      if (s.appid === winner.appid) { landing = acc + sweep * (0.25 + Math.random() * 0.5); break; }
-      acc += sweep;
-    }
-    const turns = 5 + Math.floor(Math.random() * 2);          // 5–6 full turns
+    if (!built.length || spinning) return;
+    const winner = pickWeighted(built);
+    const landing = winner.start + winner.sweep * (0.2 + Math.random() * 0.6);
+    const turns = 5 + Math.random() * 1.5;
+    const from = rotRef.current;
+    const target = from - (from % 360) + turns * 360 + (360 - landing);
+    const total = target - from;
+    const D = 4600 + Math.random() * 1200;         // 4.6–5.8s
+    const t0 = performance.now();
     setSpinning(true); setResult(null);
-    setRotation((r) => r - (r % 360) + turns * 360 + (360 - landing));
-    setTimeout(() => { setSpinning(false); setResult(winner); }, 4400);
+    let lastIdx = sliceAt(from);
+
+    const frame = (now) => {
+      const t = Math.min(1, (now - t0) / D);
+      const eased = 1 - Math.pow(1 - t, 4);        // friction: fast launch, long decay
+      const rot = from + total * eased;
+      rotRef.current = rot;
+      if (gRef.current) gRef.current.style.transform = `rotate(${rot}deg)`;
+      const idx = sliceAt(rot);
+      if (idx !== lastIdx) { lastIdx = idx; setCurrent(idx); setTick((k) => k + 1); }
+      if (t < 1) rafRef.current = requestAnimationFrame(frame);
+      else { setSpinning(false); setResult(slices[winner.idx]); setCurrent(winner.idx); }
+    };
+    rafRef.current = requestAnimationFrame(frame);
   }
 
   async function accept() {
@@ -87,39 +143,13 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
     setResult(null);
   }
 
-  // ---- build slice paths + radial labels ----
-  let angle = 0;
-  const paths = slices.map((s) => {
-    const sweep = (s.weight / totalW) * 360;
-    const a0 = (angle - 90) * Math.PI / 180, a1 = (angle + sweep - 90) * Math.PI / 180;
-    const large = sweep > 180 ? 1 : 0;
-    const d = `M ${C} ${C} L ${C + R_SLICE * Math.cos(a0)} ${C + R_SLICE * Math.sin(a0)} A ${R_SLICE} ${R_SLICE} 0 ${large} 1 ${C + R_SLICE * Math.cos(a1)} ${C + R_SLICE * Math.sin(a1)} Z`;
-
-    // radial label: runs from just inside the rim toward the hub, along the
-    // slice's mid-angle. Flipped on the left half so it never reads upside
-    // down. Truncated to the radial space available; hidden on slivers
-    // (hover the slice for a tooltip instead).
-    let label = null;
-    const mid = angle + sweep / 2;
-    if (sweep >= 9) {
-      const fs = sweep > 26 ? 13 : sweep > 15 ? 11 : 9.5;
-      const maxChars = Math.floor((R_SLICE - R_HUB - 18) / (fs * 0.56));
-      const text = s.name.length > maxChars ? s.name.slice(0, maxChars - 1) + "…" : s.name;
-      const flip = mid > 90 && mid < 270;
-      const r = R_SLICE - 10;
-      const rad = (mid - 90) * Math.PI / 180;
-      label = {
-        x: C + r * Math.cos(rad), y: C + r * Math.sin(rad),
-        rot: flip ? mid + 180 : mid, anchor: flip ? "start" : "end", fs, text,
-      };
-    }
-    const boundary = (angle - 90) * Math.PI / 180;   // dot at each slice start
-    const dot = { x: C + R_RIM * Math.cos(boundary), y: C + R_RIM * Math.sin(boundary) };
-    angle += sweep;
-    return { ...s, d, label, dot };
-  });
-
   const activeBounty = stats.contractView.filter((c) => c.source === "public" && !c.fulfilledBy.length).slice(-1)[0];
+
+  // drum readout: current slice ± 2 neighbors, curved away in perspective
+  const drumRows = built.length ? [-2, -1, 0, 1, 2].map((off) => {
+    const idx = ((current + off) % built.length + built.length) % built.length;
+    return { off, s: built[idx] };
+  }) : [];
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -137,17 +167,17 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           </span>
         )}
         <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: "auto" }}>
-          {mode === "personal" ? "Fatter slices = closer to 100% · hover a sliver to identify it" : `${slices.length} games, equal odds — the club rides together`}
+          {mode === "personal" ? "Fatter slices = closer to 100%" : `${slices.length} games, equal odds`}
         </span>
       </div>
 
-      <div className="panel" style={{ ...S.panel, display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center", justifyContent: "center", padding: 26 }}>
-        {/* responsive square: scales with viewport and zoom, capped at 440px */}
-        <div style={{ position: "relative", width: "min(88vw, 440px)", aspectRatio: "1 / 1", flexShrink: 0 }}>
-          {/* pointer */}
-          <div style={{ position: "absolute", top: "-2px", left: "50%", transform: "translateX(-50%)", zIndex: 2,
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 30, flexWrap: "wrap", alignItems: "center", justifyContent: "center", padding: 26 }}>
+        {/* ---- the wheel ---- */}
+        <div style={{ position: "relative", width: "min(88vw, 430px)", aspectRatio: "1 / 1", flexShrink: 0 }}>
+          <div key={tick} className="wheel-pointer" style={{ position: "absolute", top: "-2px", left: "50%", zIndex: 2,
             width: 0, height: 0, borderLeft: "13px solid transparent", borderRight: "13px solid transparent",
-            borderTop: "22px solid var(--accent)", filter: "drop-shadow(0 0 8px var(--accent)) drop-shadow(0 2px 3px rgba(0,0,0,.5))" }} />
+            borderTop: "22px solid var(--accent)", transformOrigin: "50% 0%",
+            filter: "drop-shadow(0 0 8px var(--accent)) drop-shadow(0 2px 3px rgba(0,0,0,.5))" }} />
           <svg width="100%" height="100%" viewBox={`0 0 ${VB} ${VB}`} style={{ display: "block" }}>
             <defs>
               <radialGradient id="wheelSheen" cx="38%" cy="34%" r="75%">
@@ -155,39 +185,34 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
                 <stop offset="55%" stopColor="#FFFFFF" stopOpacity="0.03" />
                 <stop offset="100%" stopColor="#000000" stopOpacity="0.22" />
               </radialGradient>
+              {built.map((p) => p.label && <path key={p.label.id} id={p.label.id} d={p.label.arc} fill="none" />)}
             </defs>
 
-            {/* outer rim (static) */}
             <circle cx={C} cy={C} r={R_RIM} fill="none" stroke="var(--border2)" strokeWidth="9" />
             <circle cx={C} cy={C} r={R_RIM + 6} fill="none" stroke="var(--border)" strokeWidth="2" />
 
-            {/* rotating group */}
-            <g style={{ transform: `rotate(${rotation}deg)`, transformOrigin: "50% 50%", transformBox: "view-box",
-              transition: spinning ? "transform 4.4s cubic-bezier(.1,.65,.14,1)" : "none" }}>
-              {paths.map((p) => (
+            <g ref={gRef} style={{ transform: `rotate(${rotRef.current}deg)`, transformOrigin: "50% 50%", transformBox: "view-box" }}>
+              {built.map((p) => (
                 <g key={p.appid}>
                   <path d={p.d} fill={p.color} fillOpacity="0.82" stroke="var(--bg)" strokeWidth="2.5"
                     style={result?.appid === p.appid && !spinning ? { stroke: "var(--accent)", strokeWidth: 4, filter: "drop-shadow(0 0 6px var(--accent))" } : {}}>
                     <title>{p.name}</title>
                   </path>
                   {p.label && (
-                    <text x={p.label.x} y={p.label.y} fontSize={p.label.fs} fontWeight="700"
-                      fill="#0E1420" fillOpacity="0.9" textAnchor={p.label.anchor} dominantBaseline="middle"
-                      transform={`rotate(${p.label.rot}, ${p.label.x}, ${p.label.y})`}
+                    <text fontSize={p.label.fs} fontWeight="700" fill="#0E1420" fillOpacity="0.9" dy={p.label.dy}
                       style={{ pointerEvents: "none", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.02em" }}>
-                      {p.label.text}
+                      <textPath href={`#${p.label.id}`} startOffset="50%" textAnchor="middle">{p.label.text}</textPath>
                     </text>
                   )}
                 </g>
               ))}
               <circle cx={C} cy={C} r={R_SLICE} fill="url(#wheelSheen)" pointerEvents="none" />
-              {paths.map((p) => (
+              {built.map((p) => (
                 <circle key={"d" + p.appid} cx={p.dot.x} cy={p.dot.y} r="3.2" fill="var(--bg)" stroke="var(--border2)" strokeWidth="1" />
               ))}
             </g>
 
-            {/* hub = the spin button (static, always upright) */}
-            <g onClick={spin} style={{ cursor: spinning || !slices.length ? "default" : "pointer" }}>
+            <g onClick={spin} style={{ cursor: spinning || !built.length ? "default" : "pointer" }}>
               <circle cx={C} cy={C} r={R_HUB} fill="var(--panel)" stroke="var(--accent-border)" strokeWidth="3" />
               <circle cx={C} cy={C} r={R_HUB - 8} fill="none" stroke="var(--border)" strokeWidth="1.5" />
               <text x={C} y={C + 2} textAnchor="middle" dominantBaseline="middle" fontSize="20" fontWeight="700"
@@ -199,28 +224,45 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           </svg>
         </div>
 
-        <div style={{ minWidth: 240, maxWidth: 340, flex: "1 1 240px" }}>
-          {!result && !spinning && (
-            <>
-              <div style={{ ...S.label, marginBottom: 8 }}>{mode === "personal" ? "Your fate awaits" : "The club's fate awaits"}</div>
-              <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 0 }}>
-                Hit the hub to spin.{!slices.length && " (No eligible games for this wheel.)"}
-              </p>
-              {activeBounty && mode === "public" && (
-                <p style={{ color: "var(--muted)", fontSize: 13 }}>
-                  Active bounty: <b style={{ color: "var(--accent)" }}>{activeBounty.gameName}</b> at 2× — spinning again posts an additional bounty.
-                </p>
-              )}
-            </>
+        {/* ---- drum readout + result ---- */}
+        <div style={{ minWidth: 250, maxWidth: 340, flex: "1 1 250px" }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Under the pointer</div>
+          <div style={{ perspective: "520px", marginBottom: 16 }}>
+            {drumRows.map(({ off, s }) => {
+              const abs = Math.abs(off);
+              return (
+                <div key={off} style={{
+                  transform: `rotateX(${off * -28}deg) translateZ(${abs ? -8 : 14}px) scale(${1 - abs * 0.13})`,
+                  opacity: 1 - abs * 0.32,
+                  transformOrigin: "center",
+                  background: off === 0 ? "var(--accent-bg)" : "var(--chip)",
+                  border: `1px solid ${off === 0 ? "var(--accent-border)" : "var(--border)"}`,
+                  borderRadius: 8, padding: off === 0 ? "10px 14px" : "5px 14px",
+                  margin: "3px 0", display: "flex", alignItems: "center", gap: 10,
+                  transition: spinning ? "none" : "all .25s ease",
+                }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 5, background: s.color, flexShrink: 0 }} />
+                  <span style={{
+                    ...S.display, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    fontSize: off === 0 ? 20 : 13,
+                    color: off === 0 ? "var(--accent)" : "var(--muted)",
+                  }}>{s.name}</span>
+                  {off === 0 && <span style={{ marginLeft: "auto", flexShrink: 0 }}><Dial value={s.diff} size={30} /></span>}
+                </div>
+              );
+            })}
+            {!drumRows.length && <p style={{ color: "var(--muted)", fontSize: 13 }}>No eligible games for this wheel.</p>}
+          </div>
+
+          {!result && !spinning && drumRows.length > 0 && (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>
+              Hit the hub to spin.
+              {activeBounty && mode === "public" && <> Active bounty: <b style={{ color: "var(--accent)" }}>{activeBounty.gameName}</b> at 2×.</>}
+            </p>
           )}
-          {spinning && <div style={{ ...S.display, fontSize: 22, fontWeight: 700, color: "var(--muted)" }}>Fate is deciding…</div>}
           {result && (
             <div>
               <div style={{ ...S.label, marginBottom: 6 }}>The wheel has chosen</div>
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
-                <Dial value={result.diff} size={44} />
-                <div style={{ ...S.display, fontSize: 24, fontWeight: 700, color: "var(--ink-strong)" }}>{result.name}</div>
-              </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button style={S.btn} disabled={busy} onClick={accept}>
                   {mode === "personal" ? "Sign the contract (1.5×)" : "Post the bounty (2×, everyone)"}
