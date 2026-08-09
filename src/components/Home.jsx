@@ -24,31 +24,35 @@ export default function Home({ stats, nav }) {
         {[["Perfect games", clubTotals.perfects], ["Club points", clubTotals.points.toLocaleString()], ["Achievements unlocked", clubTotals.unlocks.toLocaleString()]].map(([l, v]) => (
           <div key={l}>
             <div style={S.label}>{l}</div>
-            <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: "#E8B84B" }}>{v}</div>
+            <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: "var(--accent)" }}>{v}</div>
           </div>
         ))}
       </div>
 
       <div style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Activity</div>
-        {feed.length === 0 && <p style={{ color: "#8FA3BF", fontSize: 13 }}>No unlocks yet — go earn something.</p>}
+        {feed.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>No unlocks yet — go earn something.</p>}
         <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
           {feed.map((e, i) => {
             const m = byId[e.sid];
             return (
               <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13 }}>
-                <span style={{ color: "#44506A", fontSize: 11, minWidth: 56 }}>{timeAgo(e.t)}</span>
+                <span style={{ color: "var(--faint)", fontSize: 11, minWidth: 56 }}>{timeAgo(e.t)}</span>
                 <span style={{ minWidth: 0 }}>
                   <b style={{ color: m?.color }}>{m?.name}</b>{" "}
-                  {e.kind === "complete" ? (
-                    <>💯 <b style={{ color: "#E8B84B" }}>perfected</b>{" "}
+                  {e.kind === "claim" ? (
+                    <>🎯 claimed <i>{e.achName}</i>{" "}
+                      <span style={{ color: "var(--muted)" }}>({e.gameName}) +{Math.round(e.pts)} pts</span>
+                      {e.firstBlood && <span title="First claim"> 🩸</span>}</>
+                  ) : e.kind === "complete" ? (
+                    <>💯 <b style={{ color: "var(--accent)" }}>perfected</b>{" "}
                       <a style={S.link} onClick={() => nav(`/game/${e.appid}`)}>{e.gameName}</a>{" "}
-                      <span style={{ color: "#8FA3BF" }}>+{Math.round(e.pts)} pts</span></>
+                      <span style={{ color: "var(--muted)" }}>+{Math.round(e.pts)} pts</span></>
                   ) : (
                     <>unlocked <i>{e.achName}</i> in{" "}
                       <a style={S.link} onClick={() => nav(`/game/${e.appid}`)}>{e.gameName}</a>{" "}
                       <TierChip pct={e.pct} />{" "}
-                      <span style={{ color: "#8FA3BF" }}>+{Math.round(e.pts)}</span>
+                      <span style={{ color: "var(--muted)" }}>+{Math.round(e.pts)}</span>
                       {e.firstBlood && <span title="First in the club"> 🩸</span>}</>
                   )}
                 </span>
@@ -60,7 +64,7 @@ export default function Home({ stats, nav }) {
 
       <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
         {challenge && (
-          <div style={{ ...S.panel, borderColor: "#4A3D18" }}>
+          <div style={{ ...S.panel, borderColor: "var(--accent-border)" }}>
             <div style={{ ...S.label, marginBottom: 10 }}>Monthly challenge · {challenge.month}</div>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
               <Dial value={challenge.game.diff} size={38} />
@@ -70,8 +74,8 @@ export default function Home({ stats, nav }) {
               const m = byId[s.sid];
               return (
                 <div key={s.sid} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-                  <span><span style={{ color: "#44506A" }}>{i + 1}.</span> <b style={{ color: m?.color }}>{m?.name}</b> <span style={{ color: "#8FA3BF" }}>{s.pct}%</span></span>
-                  <b style={{ color: "#E8B84B" }}>{s.pts} pts</b>
+                  <span><span style={{ color: "var(--faint)" }}>{i + 1}.</span> <b style={{ color: m?.color }}>{m?.name}</b> <span style={{ color: "var(--muted)" }}>{s.pct}%</span></span>
+                  <b style={{ color: "var(--accent)" }}>{s.pts} pts</b>
                 </div>
               );
             })}
@@ -87,7 +91,7 @@ export default function Home({ stats, nav }) {
                 {r.winner ? (
                   <span>👑 <b style={{ color: byId[r.winner]?.color }}>{byId[r.winner]?.name}</b></span>
                 ) : (
-                  <span style={{ color: "#8FA3BF" }}>in progress…</span>
+                  <span style={{ color: "var(--muted)" }}>in progress…</span>
                 )}
               </div>
             ))}
@@ -96,13 +100,13 @@ export default function Home({ stats, nav }) {
 
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>Closest finishes in the club</div>
-          {closest.length === 0 && <p style={{ color: "#8FA3BF", fontSize: 13 }}>Nothing in progress.</p>}
+          {closest.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>Nothing in progress.</p>}
           {closest.map((r) => {
             const m = byId[r.sid];
             return (
               <div key={r.sid + r.appid} style={{ fontSize: 13, marginBottom: 8 }}>
                 <b style={{ color: m?.color }}>{m?.name}</b> — <a style={S.link} onClick={() => nav(`/game/${r.appid}`)}>{r.name}</a>{" "}
-                <span style={{ color: "#8FA3BF" }}>{r.missingCount} left · +{r.ptsLeft} pts waiting</span>
+                <span style={{ color: "var(--muted)" }}>{r.missingCount} left · +{r.ptsLeft} pts waiting</span>
               </div>
             );
           })}

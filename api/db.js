@@ -64,13 +64,17 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
         supabase.from("backlog").select("*").order("added_at"),
+        supabase.from("contracts").select("*").order("accepted_at"),
+        supabase.from("hunts").select("*").order("month", { ascending: false }),
+        supabase.from("challenges").select("*").order("created_at"),
+        supabase.from("claims").select("*").order("claimed_at"),
       ]);
-      const failed = [members, games, settings, backlog].find((r) => r.error);
+      const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
         return res.status(500).json({
           error: `Database read failed: ${failed.error.message}. ` +
@@ -82,6 +86,10 @@ export default async function handler(req, res) {
         games: games.data ?? [],
         settings: settings.data?.data ?? {},
         backlog: backlog.data ?? [],
+        contracts: contracts.data ?? [],
+        hunts: hunts.data ?? [],
+        challenges: challenges.data ?? [],
+        claims: claims.data ?? [],
       });
     }
 
@@ -184,6 +192,76 @@ export default async function handler(req, res) {
         if (error) return fail(500, error.message);
         await supabase.from("backlog").delete().eq("appid", body.appid);
         return res.status(200).json({ ok: true, name: g.name });
+      }
+      // ---- wheel contracts ----
+      case "createContract": {
+        const { error } = await supabase.from("contracts").insert({
+          steamid: body.steamid ?? null,                 // null = public bounty
+          appid: Number(body.appid),
+          multiplier: body.source === "public" ? 2.0 : 1.5,
+          source: body.source === "public" ? "public" : "personal",
+        });
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "abandonContract": {
+        const { error } = await supabase.from("contracts").delete().eq("id", body.id);
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      // ---- monthly hunts ----
+      case "createHunt": {
+        if (!/^\d{4}-\d{2}$/.test(body.month ?? "")) return fail(400, "month must be YYYY-MM");
+        if (!Array.isArray(body.achievements) || !body.achievements.length)
+          return fail(400, "No achievements selected");
+        const { error } = await supabase.from("hunts").upsert({
+          month: body.month, appids: body.appids, achievements: body.achievements, status: "active",
+        });
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "finishHunt": {
+        const { error } = await supabase.from("hunts")
+          .update({ status: "finished", final: body.final ?? null }).eq("month", body.month);
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "deleteHunt": {
+        const { error } = await supabase.from("hunts").delete().eq("month", body.month);
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      // ---- custom challenges (honor system) ----
+      case "addChallenge": {
+        if (!body.title?.trim()) return fail(400, "Challenge needs a title");
+        const difficulty = Math.max(1, Math.min(10, parseInt(body.difficulty, 10) || 5));
+        const { error } = await supabase.from("challenges").insert({
+          title: body.title.trim().slice(0, 200),
+          description: String(body.description ?? "").slice(0, 2000),
+          category: (body.category?.trim() || "General").slice(0, 100),
+          difficulty, proposed_by: body.proposedBy ?? null,
+        });
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "removeChallenge": {
+        const { error } = await supabase.from("challenges").delete().eq("id", body.id);
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "claimChallenge": {
+        const { error } = await supabase.from("claims").upsert({
+          challenge_id: Number(body.id), steamid: body.steamid,
+          proof: body.proof ? String(body.proof).slice(0, 500) : null,
+        });
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "unclaimChallenge": {
+        const { error } = await supabase.from("claims").delete()
+          .eq("challenge_id", body.id).eq("steamid", body.steamid);
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
       }
       default:
         return fail(400, `Unknown op '${op}'`);

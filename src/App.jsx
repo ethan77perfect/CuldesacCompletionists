@@ -33,6 +33,10 @@ import PlayerPage from "./components/PlayerPage.jsx";
 import Compare from "./components/Compare.jsx";
 import StatsPage from "./components/StatsPage.jsx";
 import Backlog from "./components/Backlog.jsx";
+import Wheel from "./components/Wheel.jsx";
+import Hunt from "./components/Hunt.jsx";
+import Challenges from "./components/Challenges.jsx";
+import { THEMES, DEFAULT_THEME, applyTheme } from "./lib/themes.js";
 
 // ---- tiny hash router ----
 // The URL hash ("#/game/123") is our page address. Why hash instead
@@ -56,7 +60,8 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["charts", "Charts"], ["stats", "Stats"], ["compare", "Compare"],
+  ["hunt", "Hunt"], ["wheel", "Wheel"], ["challenges", "Challenges"],
+  ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
 
@@ -84,6 +89,8 @@ export default function App() {
   const [libSort, setLibSort] = useState("diff");
   const [libSearch, setLibSearch] = useState("");
   const [boardMode, setBoardMode] = useState("all");
+  const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? DEFAULT_THEME);
+  useEffect(() => { applyTheme(theme); }, [theme]);
 
   const [loadProgress, setLoadProgress] = useState(null);
 
@@ -174,21 +181,30 @@ export default function App() {
   const [newMember, setNewMember] = useState({ idOrVanity: "", color: "#7FB4E6" });
   const [newGame, setNewGame] = useState("");
 
-  const board = stats ? (boardMode === "season" ? stats.seasonBoard : stats.board) : [];
-  const pts = (p) => (boardMode === "season" ? p.seasonPoints : p.points);
+  const board = stats
+    ? (boardMode === "season" ? stats.seasonBoard : boardMode === "contracts" ? stats.contractBoard : stats.board)
+    : [];
+  const pts = (p) => (boardMode === "season" ? p.seasonPoints : boardMode === "contracts" ? p.contractPts : p.points);
 
   return (
     <div style={S.page}>
       <style>{`
-        .tab { background:none; border:none; color:#8FA3BF; font:600 13px Inter,sans-serif; letter-spacing:.08em; text-transform:uppercase; padding:10px 2px; margin-right:22px; cursor:pointer; border-bottom:2px solid transparent; }
-        .tab.on { color:#E8B84B; border-bottom-color:#E8B84B; }
-        .tab:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid #E8B84B; outline-offset:2px; }
+        .tab { background:none; border:none; color:var(--muted); font:600 13px Inter,sans-serif; letter-spacing:.08em; text-transform:uppercase; padding:10px 2px; margin-right:22px; cursor:pointer; border-bottom:2px solid transparent; }
+        .tab.on { color:var(--accent); border-bottom-color:var(--accent); }
+        .tab:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
         a { text-decoration: none; }
+        body, .panel-hover { transition: background .25s, border-color .25s, color .25s; }
+        .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+        .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
         @media (prefers-reduced-motion: reduce){ *{ transition:none !important } }`}</style>
 
-      <div style={{ borderBottom: "1px solid #232D40", background: "#111828" }}>
+      <div style={{ borderBottom: "1px solid var(--border)", background: "var(--header)", backgroundImage: "linear-gradient(to right, var(--accent) 0%, transparent 40%)", backgroundSize: "100% 2px", backgroundRepeat: "no-repeat", backgroundPosition: "bottom" }}>
         <div style={{ ...S.wrap, padding: "24px 20px 0" }}>
-          <h1 style={{ ...S.display, fontSize: 40, fontWeight: 700, margin: 0, color: "#F2F5FA", letterSpacing: "0.02em", cursor: "pointer" }}
+          <h1 style={{ ...S.display, fontSize: 40, fontWeight: 700, margin: 0, color: "var(--ink-strong)", letterSpacing: "0.02em", cursor: "pointer" }}
             onClick={() => nav("/home")}>THE 100% CLUB</h1>
           <nav style={{ marginTop: 12, overflowX: "auto", whiteSpace: "nowrap" }}>
             {NAV.map(([k, l]) => (
@@ -200,28 +216,28 @@ export default function App() {
 
       <div style={{ ...S.wrap, marginTop: 24 }}>
         {error && (
-          <div style={{ ...S.panel, borderColor: "#5A2B2B", background: "#241416", marginBottom: 14, fontSize: 13 }}>
+          <div style={{ ...S.panel, borderColor: "var(--err-border)", background: "var(--err-bg)", marginBottom: 14, fontSize: 13 }}>
             {error} <button style={{ ...S.btnGhost, marginLeft: 10 }} onClick={loadAll}>Retry</button>
           </div>
         )}
         {notice && (
-          <div style={{ ...S.panel, borderColor: "#4A3D18", background: "#1E1A0E", marginBottom: 14, fontSize: 13, color: "#E8B84B" }}>{notice}</div>
+          <div style={{ ...S.panel, borderColor: "var(--accent-border)", background: "var(--ok-bg)", marginBottom: 14, fontSize: 13, color: "var(--accent)" }}>{notice}</div>
         )}
         {loadProgress && (
-          <div style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "#8FA3BF", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
             <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
-            <div style={{ flex: 1, background: "#232D40", borderRadius: 3, height: 6 }}>
-              <div style={{ width: `${(loadProgress.done / Math.max(loadProgress.total, 1)) * 100}%`, background: "#E8B84B", height: 6, borderRadius: 3, transition: "width .3s" }} />
+            <div style={{ flex: 1, background: "var(--border)", borderRadius: 3, height: 6 }}>
+              <div style={{ width: `${(loadProgress.done / Math.max(loadProgress.total, 1)) * 100}%`, background: "var(--accent)", height: 6, borderRadius: 3, transition: "width .3s" }} />
             </div>
           </div>
         )}
-        {!meta && !error && <div style={{ color: "#8FA3BF", padding: 40, textAlign: "center" }}>Loading the club…</div>}
-        {meta && !clubData && !error && <div style={{ color: "#8FA3BF", padding: 40, textAlign: "center" }}>Pulling achievements from Steam…</div>}
+        {!meta && !error && <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>Loading the club…</div>}
+        {meta && !clubData && !error && <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>Pulling achievements from Steam…</div>}
 
         {empty && page !== "settings" && (
           <div style={{ ...S.panel, textAlign: "center", padding: 40 }}>
-            <div style={{ ...S.display, fontSize: 26, fontWeight: 700, color: "#F2F5FA" }}>The club is empty</div>
-            <p style={{ color: "#8FA3BF", fontSize: 14 }}>Add members and games in Settings to bring it to life.</p>
+            <div style={{ ...S.display, fontSize: 26, fontWeight: 700, color: "var(--ink-strong)" }}>The club is empty</div>
+            <p style={{ color: "var(--muted)", fontSize: 14 }}>Add members and games in Settings to bring it to life.</p>
             <button style={S.btn} onClick={() => nav("/settings")}>Open settings</button>
           </div>
         )}
@@ -235,28 +251,35 @@ export default function App() {
         {stats && !empty && page === "game" && <GameDetail stats={stats} appid={param} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "player" && <PlayerPage stats={stats} sid={param} nav={nav} />}
         {stats && !empty && page === "compare" && <Compare stats={stats} meta={meta} nav={nav} />}
-        {stats && !empty && page === "stats" && <StatsPage stats={stats} nav={nav} />}
+        {stats && !empty && page === "stats" && <StatsPage stats={stats} nav={nav} members={meta.members} />}
         {meta && page === "backlog" && <Backlog meta={meta} mutate={mutate} busy={busy} />}
+        {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
+        {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
+        {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
 
         {stats && !empty && page === "board" && (
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              {[["all", "All-time"], ["season", `This season (${stats.season})`]].map(([k, l]) => (
-                <button key={k} style={{ ...S.btnGhost, ...(boardMode === k ? { color: "#E8B84B", borderColor: "#4A3D18" } : {}) }}
+              {[["all", "All-time"], ["season", `This season (${stats.season})`], ["contracts", "⚔ Contract kills"]].map(([k, l]) => (
+                <button key={k} style={{ ...S.btnGhost, ...(boardMode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
                   onClick={() => setBoardMode(k)}>{l}</button>
               ))}
             </div>
             {board.map((p, i) => (
               <div key={p.steamid} style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ ...S.display, fontSize: 32, fontWeight: 700, color: i === 0 ? "#E8B84B" : "#44506A", width: 36 }}>{i + 1}</div>
+                <div style={{ ...S.display, fontSize: 32, fontWeight: 700, color: i === 0 ? "var(--accent)" : "var(--faint)", width: 36 }}>{i + 1}</div>
                 <Avatar url={p.avatar} color={p.color} size={44} />
                 <div style={{ flex: "1 1 150px" }}>
                   <a style={{ fontSize: 17, fontWeight: 600, color: p.color, cursor: "pointer" }} onClick={() => nav(`/player/${p.steamid}`)}>{p.name}</a>
-                  <div style={{ fontSize: 12, color: "#8FA3BF", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
                     {p.rarestUnlock ? <>Rarest: {p.rarestUnlock.achName} ({p.rarestUnlock.pct.toFixed(2)}%)</> : "No unlocks yet"}
                   </div>
                 </div>
-                {[["Perfects", p.perfects, "#F2F5FA"], ["Streak", `${p.streak.current}w`, "#8FA3BF"], ["Points", pts(p).toLocaleString(), "#E8B84B"]].map(([l, v, c]) => (
+                {[
+                  ["Perfects", p.perfects, "var(--ink-strong)"],
+                  boardMode === "contracts" ? ["Kills", p.contractKills, "var(--muted)"] : ["Streak", `${p.streak.current}w`, "var(--muted)"],
+                  ["Points", pts(p).toLocaleString(), "var(--accent)"],
+                ].map(([l, v, c]) => (
                   <div key={l} style={{ textAlign: "right", minWidth: 74 }}>
                     <div style={S.label}>{l}</div>
                     <div style={{ ...S.display, fontSize: 24, fontWeight: 700, color: c }}>{v}</div>
@@ -264,8 +287,10 @@ export default function App() {
                 ))}
               </div>
             ))}
-            <p style={{ fontSize: 12, color: "#8FA3BF", margin: "2px 2px" }}>
-              {boardMode === "season"
+            <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px" }}>
+              {boardMode === "contracts"
+                ? "Contract kills: achievements and points earned under an active wheel contract or club bounty."
+                : boardMode === "season"
                 ? "Season points count only unlocks earned this quarter — all-time totals are untouched."
                 : <>Points accrue per achievement (rarity-weighted, +{Math.round((cfg.firstBloodPct ?? 0.1) * 100)}% first-blood bonus 🩸) — {Math.round(cfg.bonus * 100)}% of each pool only lands on 100%.</>}
             </p>
@@ -298,16 +323,16 @@ export default function App() {
                   return b.diff - a.diff;
                 })
                 .map((g) => (
-                  <div key={g.appid} style={{ ...S.panel, cursor: "pointer" }} onClick={() => nav(`/game/${g.appid}`)}>
+                  <div key={g.appid} className="card-lift" style={{ ...S.panel, cursor: "pointer" }} onClick={() => nav(`/game/${g.appid}`)}>
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <Dial value={g.diff} />
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 16, fontWeight: 600, color: "#F2F5FA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <div style={{ fontSize: 16, fontWeight: 600, color: "var(--ink-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {g.race && "🏁 "}{g.name}
                         </div>
-                        <div style={{ fontSize: 12, color: "#8FA3BF" }}>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
                           {g.ach.length} achievements · pool {g.pool} pts
-                          {g.adjust !== 0 && <span style={{ color: "#E8B84B" }}> · adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
+                          {g.adjust !== 0 && <span style={{ color: "var(--accent)" }}> · adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
                         </div>
                       </div>
                     </div>
@@ -317,16 +342,16 @@ export default function App() {
                         return (
                           <span key={m.steamid} style={{
                             fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 20,
-                            background: r.complete ? "#2A2410" : "#1E2637",
-                            color: r.complete ? "#E8B84B" : m.color,
-                            border: `1px solid ${r.complete ? "#4A3D18" : "#2C3852"}`,
+                            background: r.complete ? "var(--accent-bg)" : "var(--chip)",
+                            color: r.complete ? "var(--accent)" : m.color,
+                            border: `1px solid ${r.complete ? "var(--accent-border)" : "var(--border2)"}`,
                           }}>
                             {m.name} {r.complete ? "★ 100%" : `${r.pct}%`}
                           </span>
                         );
                       })}
                       {Object.keys(g.players).length === 0 && (
-                        <span style={{ fontSize: 12, color: "#44506A" }}>No one has started this yet</span>
+                        <span style={{ fontSize: 12, color: "var(--faint)" }}>No one has started this yet</span>
                       )}
                     </div>
                   </div>
@@ -335,58 +360,11 @@ export default function App() {
           </div>
         )}
 
-        {stats && !empty && page === "charts" && (
-          <div style={{ display: "grid", gap: 14 }}>
-            <div style={S.panel}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-                <div style={S.label}>Club points over time</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {[["6", "6 months"], ["12", "Past year"], ["all", "All time"]].map(([k, l]) => (
-                    <button key={k} onClick={() => setRange(k)}
-                      style={{ ...S.btnGhost, ...(range === k ? { color: "#E8B84B", borderColor: "#4A3D18" } : {}) }}>{l}</button>
-                  ))}
-                </div>
-              </div>
-              {stats.timeline.length ? (
-                <ResponsiveContainer width="100%" height={260}>
-                  <AreaChart data={range === "all" ? stats.timeline : stats.timeline.slice(-parseInt(range, 10))}>
-                    <CartesianGrid stroke="#232D40" vertical={false} />
-                    <XAxis dataKey="month" stroke="#8FA3BF" fontSize={11} />
-                    <YAxis stroke="#8FA3BF" fontSize={11} />
-                    <Tooltip contentStyle={{ background: "#111828", border: "1px solid #232D40", borderRadius: 8 }} />
-                    <Legend />
-                    {meta.members.map((m) => (
-                      <Area key={m.steamid} type="monotone" dataKey={m.name}
-                        stroke={m.color} fill={m.color} fillOpacity={0.12} strokeWidth={2} />
-                    ))}
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <p style={{ color: "#8FA3BF", fontSize: 13 }}>Unlock some achievements and the race chart appears here.</p>
-              )}
-            </div>
-            <div style={S.panel}>
-              <div style={{ ...S.label, marginBottom: 12 }}>Library by difficulty</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={stats.histogram}>
-                  <CartesianGrid stroke="#232D40" vertical={false} />
-                  <XAxis dataKey="diff" stroke="#8FA3BF" fontSize={11} />
-                  <YAxis allowDecimals={false} stroke="#8FA3BF" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "#111828", border: "1px solid #232D40", borderRadius: 8 }} />
-                  <Bar dataKey="games" radius={[4, 4, 0, 0]}>
-                    {stats.histogram.map((h) => <Cell key={h.diff} fill={diffColor(h.diff)} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
         {meta && page === "settings" && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
             <div style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Club key</div>
-              <p style={{ fontSize: 12, color: "#8FA3BF", marginTop: 0 }}>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 0 }}>
                 Needed to add or remove anything — it's the CLUB_KEY from deployment. Share it with your friends.
               </p>
               <input style={S.input} type="password" placeholder="Enter club key" value={clubKey}
@@ -432,7 +410,7 @@ export default function App() {
                       <span title="Club difficulty adjustment" style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) <= -3} aria-label={`Lower ${g.name} difficulty`}
                           onClick={() => mutate("setAdjust", { appid: g.appid, adjust: (g.adjust ?? 0) - 1 }, (j) => `${g.name} adjustment: ${j.adjust >= 0 ? "+" : ""}${j.adjust}`)}>−</button>
-                        <span style={{ fontSize: 12, fontWeight: 700, width: 24, textAlign: "center", color: (g.adjust ?? 0) !== 0 ? "#E8B84B" : "#44506A" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, width: 24, textAlign: "center", color: (g.adjust ?? 0) !== 0 ? "var(--accent)" : "var(--faint)" }}>
                           {(g.adjust ?? 0) > 0 ? `+${g.adjust}` : (g.adjust ?? 0)}
                         </span>
                         <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) >= 3} aria-label={`Raise ${g.name} difficulty`}
@@ -449,6 +427,25 @@ export default function App() {
                 onClick={() => mutate("addGame", { appidOrUrl: newGame }, (j) => `${j.name} added (${j.achCount} achievements)`).then(() => setNewGame(""))}>
                 Add game
               </button>
+            </div>
+
+            <div style={S.panel}>
+              <div style={{ ...S.label, marginBottom: 12 }}>Theme</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {Object.entries(THEMES).map(([id, t]) => (
+                  <label key={id} style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer", fontSize: 14 }}>
+                    <input type="radio" name="theme" checked={theme === id} onChange={() => setTheme(id)}
+                      style={{ accentColor: "var(--accent)" }} />
+                    <span style={{ display: "flex", gap: 3 }}>
+                      {["--bg", "--panel", "--accent"].map((v) => (
+                        <span key={v} style={{ width: 14, height: 14, borderRadius: 4, background: t.vars[v], border: "1px solid var(--border2)" }} />
+                      ))}
+                    </span>
+                    <span style={{ fontWeight: theme === id ? 700 : 400, color: theme === id ? "var(--accent)" : "var(--ink)" }}>{t.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 10 }}>Saved per device — everyone picks their own.</p>
             </div>
 
             <div style={S.panel}>
@@ -475,7 +472,7 @@ export default function App() {
                 )}
               </div>
 
-              <p style={{ fontSize: 12, color: "#8FA3BF", marginTop: 14 }}>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 14 }}>
                 Everything previews live for you — saving makes it official for the whole club.
               </p>
               <button style={S.btn} disabled={busy}

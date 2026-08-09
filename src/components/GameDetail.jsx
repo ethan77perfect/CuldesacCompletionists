@@ -18,7 +18,7 @@ import { S, Dial, TierChip, fmtDate } from "./ui.jsx";
 export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
   const g = stats.games.find((x) => x.appid === Number(appid));
   const [notesDraft, setNotesDraft] = useState(null);
-  if (!g) return <p style={{ color: "#8FA3BF" }}>Game not found — is it still tracked?</p>;
+  if (!g) return <p style={{ color: "var(--muted)" }}>Game not found — is it still tracked?</p>;
 
   const members = meta.members.filter((m) => g.players[m.steamid]);
   const sorted = [...g.ach].sort((a, b) => a.pct - b.pct);
@@ -28,10 +28,10 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
       <div style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <Dial value={g.diff} size={56} />
         <div style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ ...S.display, fontSize: 28, fontWeight: 700, color: "#F2F5FA" }}>{g.name}</div>
-          <div style={{ fontSize: 13, color: "#8FA3BF" }}>
+          <div style={{ ...S.display, fontSize: 28, fontWeight: 700, color: "var(--ink-strong)" }}>{g.name}</div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>
             {g.ach.length} achievements · pool {g.pool} pts · rarest {Math.min(...g.ach.map((a) => a.pct)).toFixed(2)}%
-            {g.adjust !== 0 && <span style={{ color: "#E8B84B" }}> · club adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
+            {g.adjust !== 0 && <span style={{ color: "var(--accent)" }}> · club adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
             {g.race && <span> · 🏁 race</span>}
           </div>
         </div>
@@ -59,7 +59,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
         <div style={{ ...S.label, marginBottom: 12 }}>Achievements — rarest first</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
-            <tr style={{ textAlign: "left", color: "#8FA3BF" }}>
+            <tr style={{ textAlign: "left", color: "var(--muted)" }}>
               <th style={{ padding: "6px 8px" }}>Achievement</th>
               <th style={{ padding: "6px 8px" }}>Rarity</th>
               <th style={{ padding: "6px 8px", textAlign: "right" }}>Pts</th>
@@ -72,16 +72,16 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
             {sorted.map((a) => {
               const pts = Math.round(g.table.per.get(a.id) ?? 0);
               return (
-                <tr key={a.id} style={{ borderTop: "1px solid #232D40" }}>
+                <tr key={a.id} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ padding: "7px 8px" }}>{a.name}</td>
                   <td style={{ padding: "7px 8px" }}><TierChip pct={a.pct} /></td>
-                  <td style={{ padding: "7px 8px", textAlign: "right", color: "#E8B84B", fontWeight: 600 }}>{pts}</td>
+                  <td style={{ padding: "7px 8px", textAlign: "right", color: "var(--accent)", fontWeight: 600 }}>{pts}</td>
                   {members.map((m) => {
                     const u = g.players[m.steamid].unlocks.find((x) => x.id === a.id);
                     return (
                       <td key={m.steamid} style={{ padding: "7px 8px", textAlign: "center" }}
                         title={u?.t ? fmtDate(u.t) : "Not unlocked"}>
-                        {u ? "✓" : <span style={{ color: "#2C3852" }}>—</span>}
+                        {u ? "✓" : <span style={{ color: "var(--border2)" }}>—</span>}
                       </td>
                     );
                   })}
@@ -99,7 +99,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
           return (
             <div key={m.steamid} style={S.panel}>
               <a style={{ ...S.link, fontWeight: 600, fontSize: 15 }} onClick={() => nav(`/player/${m.steamid}`)}>{m.name}</a>
-              <div style={{ fontSize: 13, color: "#8FA3BF", marginTop: 6 }}>
+              <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6 }}>
                 {r.complete ? `★ 100% on ${fmtDate(r.lastUnlock)}` : `${r.pct}% · ${r.missing.length} to go`}
                 <br />{Math.round(r.basePoints)} pts{hours != null && <> · {hours}h played</>}
               </div>

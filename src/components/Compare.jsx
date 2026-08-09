@@ -17,7 +17,7 @@ export default function Compare({ stats, meta, nav }) {
   const [b, setB] = useState(members[1]?.steamid ?? "");
   const [gapGame, setGapGame] = useState(null);
 
-  if (members.length < 2) return <p style={{ color: "#8FA3BF" }}>Need at least two members to compare.</p>;
+  if (members.length < 2) return <p style={{ color: "var(--muted)" }}>Need at least two members to compare.</p>;
   const A = stats.perPlayer[a], B = stats.perPlayer[b];
 
   const shared = stats.games.filter((g) => g.players[a] && g.players[b]);
@@ -45,14 +45,14 @@ export default function Compare({ stats, meta, nav }) {
       <div style={{ ...S.panel, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
         <Avatar url={A?.avatar} color={A?.color} size={52} />
         {sel(a, setA)}
-        <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: "#44506A" }}>
+        <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: "var(--faint)" }}>
           {winsA} <span style={{ fontSize: 18 }}>vs</span> {winsB}
         </div>
         {sel(b, setB)}
         <Avatar url={B?.avatar} color={B?.color} size={52} />
       </div>
 
-      {a === b ? <p style={{ color: "#8FA3BF", textAlign: "center" }}>Pick two different people — self-reflection is a different website.</p> : (
+      {a === b ? <p style={{ color: "var(--muted)", textAlign: "center" }}>Pick two different people — self-reflection is a different website.</p> : (
         <>
           <div style={{ ...S.panel, display: "flex", gap: 26, flexWrap: "wrap", justifyContent: "center" }}>
             {[
@@ -65,7 +65,7 @@ export default function Compare({ stats, meta, nav }) {
                 <div style={S.label}>{l}</div>
                 <div style={{ ...S.display, fontSize: 22, fontWeight: 700 }}>
                   <span style={{ color: A.color }}>{va}</span>
-                  <span style={{ color: "#44506A" }}> · </span>
+                  <span style={{ color: "var(--faint)" }}> · </span>
                   <span style={{ color: B.color }}>{vb}</span>
                 </div>
               </div>
@@ -78,7 +78,7 @@ export default function Compare({ stats, meta, nav }) {
               {rows.map(({ g, ra, rb, lead }) => (
                 <div key={g.appid} onClick={() => setGapGame(g.appid === gapGame ? null : g.appid)}
                   style={{ display: "flex", gap: 12, alignItems: "center", cursor: "pointer",
-                    background: gapGame === g.appid ? "#1E2637" : "transparent", borderRadius: 8, padding: 6 }}>
+                    background: gapGame === g.appid ? "var(--chip)" : "transparent", borderRadius: 8, padding: 6 }}>
                   <Dial value={g.diff} size={32} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 5 }}>
@@ -90,7 +90,7 @@ export default function Compare({ stats, meta, nav }) {
                       <PctBar pct={rb.pct} color={B.color} />
                     </div>
                   </div>
-                  <div style={{ fontSize: 12, color: "#8FA3BF", textAlign: "right", minWidth: 70 }}>
+                  <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "right", minWidth: 70 }}>
                     {ra.pct}% · {rb.pct}%
                   </div>
                 </div>
@@ -109,7 +109,7 @@ export default function Compare({ stats, meta, nav }) {
                       <div style={{ fontSize: 13, fontWeight: 700, color: P.color, marginBottom: 8 }}>
                         Only {P.name} has ({only.length})
                       </div>
-                      {only.length === 0 && <span style={{ fontSize: 13, color: "#8FA3BF" }}>Nothing — fix that.</span>}
+                      {only.length === 0 && <span style={{ fontSize: 13, color: "var(--muted)" }}>Nothing — fix that.</span>}
                       <div style={{ display: "grid", gap: 6, maxHeight: 220, overflowY: "auto" }}>
                         {only.map((u) => {
                           const ach = gap.g.achById[u.id];

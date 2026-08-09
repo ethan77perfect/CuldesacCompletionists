@@ -21,18 +21,18 @@
 // ---------------------------------------------------------------
 import { tierOf } from "../lib/stats.js";
 
-export const diffColor = (d) => (d <= 3 ? "#5CB8A6" : d <= 6 ? "#E8B84B" : d <= 8 ? "#E0824B" : "#E05B5B");
+export const diffColor = (d) => (d <= 3 ? "#5CB8A6" : d <= 6 ? "var(--accent)" : d <= 8 ? "#E0824B" : "#E05B5B");
 
 export const S = {
-  page: { minHeight: "100vh", background: "#0E1420", color: "#D7DFEC", fontFamily: "'Inter', system-ui, sans-serif", paddingBottom: 64 },
+  page: { minHeight: "100vh", background: "var(--bg)", color: "var(--ink)", fontFamily: "'Inter', system-ui, sans-serif", paddingBottom: 64 },
   wrap: { maxWidth: 1060, margin: "0 auto", padding: "0 20px" },
-  panel: { background: "#18202F", border: "1px solid #232D40", borderRadius: 10, padding: 18 },
-  label: { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "#8FA3BF", fontWeight: 600 },
+  panel: { background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: 18 },
+  label: { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--muted)", fontWeight: 600 },
   display: { fontFamily: "'Barlow Condensed', 'Arial Narrow', sans-serif" },
-  input: { background: "#0E1420", border: "1px solid #2C3852", borderRadius: 6, color: "#D7DFEC", padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box" },
-  btn: { background: "#E8B84B", color: "#1A1608", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
-  btnGhost: { background: "none", color: "#8FA3BF", border: "1px solid #2C3852", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" },
-  link: { color: "#E8B84B", cursor: "pointer", textDecoration: "none" },
+  input: { background: "var(--bg)", border: "1px solid var(--border2)", borderRadius: 6, color: "var(--ink)", padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box" },
+  btn: { background: "var(--accent)", color: "var(--accent-ink)", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  btnGhost: { background: "none", color: "var(--muted)", border: "1px solid var(--border2)", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer" },
+  link: { color: "var(--accent)", cursor: "pointer", textDecoration: "none" },
 };
 
 export function Dial({ value, size = 44 }) {
@@ -61,11 +61,11 @@ export function Slider({ label, value, min, max, step, onChange, fmt }) {
     <label style={{ display: "block", marginBottom: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
-        <span style={{ fontSize: 13, color: "#E8B84B", fontWeight: 600 }}>{fmt(value)}</span>
+        <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>{fmt(value)}</span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        style={{ width: "100%", accentColor: "#E8B84B" }} />
+        style={{ width: "100%", accentColor: "var(--accent)" }} />
     </label>
   );
 }
@@ -91,7 +91,7 @@ export function Avatar({ url, color, size = 40 }) {
 
 export function PctBar({ pct, color }) {
   return (
-    <div style={{ background: "#232D40", borderRadius: 3, height: 6, width: "100%" }}>
+    <div style={{ background: "var(--border)", borderRadius: 3, height: 6, width: "100%" }}>
       <div style={{ width: `${pct}%`, background: color, height: 6, borderRadius: 3 }} />
     </div>
   );

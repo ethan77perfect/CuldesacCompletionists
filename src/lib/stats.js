@@ -114,6 +114,48 @@ export function buildClubStats(clubData, meta, settings) {
       }
     }
   }
+  // ---- wheel contracts: multiply events earned under contract ----
+  // A contract applies to (its player | everyone, if public bounty) for
+  // events in that game unlocked AFTER acceptance. Overlapping contracts
+  // don't stack — the highest multiplier wins.
+  const contracts = (meta.contracts ?? []).map((c) => ({
+    ...c, epoch: Date.parse(c.accepted_at) / 1000, multiplier: parseFloat(c.multiplier),
+  }));
+  const contractMult = (sid, appid, t) => {
+    let m = 1;
+    for (const c of contracts) {
+      if (Number(c.appid) !== Number(appid)) continue;
+      if (c.steamid && c.steamid !== sid) continue;
+      if (t >= c.epoch) m = Math.max(m, c.multiplier);
+    }
+    return m;
+  };
+  for (const e of events) {
+    const m = contractMult(e.sid, e.appid, e.t);
+    if (m > 1) { e.contract = m; e.pts *= m; }
+  }
+
+  // ---- custom challenges (honor system) → claim events ----
+  // Each claim earns difficulty×100 (+first-blood for the earliest claim).
+  // settings.countChallenges === false keeps them out of the main pool.
+  const challengeById = Object.fromEntries((meta.challenges ?? []).map((c) => [c.id, c]));
+  if (cfg.countChallenges !== false) {
+    const claimsByCh = {};
+    for (const cl of meta.claims ?? []) (claimsByCh[cl.challenge_id] ??= []).push(cl);
+    for (const [chId, list] of Object.entries(claimsByCh)) {
+      const ch = challengeById[chId];
+      if (!ch) continue;
+      const value = ch.difficulty * 100;
+      const sorted = [...list].sort((a, b) => Date.parse(a.claimed_at) - Date.parse(b.claimed_at));
+      sorted.forEach((cl, i) => {
+        events.push({
+          sid: cl.steamid, appid: null, gameName: ch.category, t: Date.parse(cl.claimed_at) / 1000,
+          kind: "claim", pts: value * (i === 0 ? 1 + fbPct : 1), firstBlood: i === 0,
+          achName: ch.title, pct: null, challengeId: ch.id,
+        });
+      });
+    }
+  }
   events.sort((a, b) => a.t - b.t);
 
   // ---- totals, season, streaks ----
@@ -127,6 +169,10 @@ export function buildClubStats(clubData, meta, settings) {
     const p = perPlayer[e.sid];
     if (!p) continue;
     p.points += e.pts;
+    if (e.contract) {
+      p.contractPts = (p.contractPts ?? 0) + e.pts;
+      if (e.kind === "unlock") p.contractKills = (p.contractKills ?? 0) + 1;
+    }
     if (e.t >= seasonCut) p.seasonPoints += e.pts;
     p.weeks.add(isoWeek(e.t));
     if (e.kind === "unlock" && (!p.rarestUnlock || e.pct < p.rarestUnlock.pct)) p.rarestUnlock = e;
@@ -162,6 +208,8 @@ export function buildClubStats(clubData, meta, settings) {
   for (const p of Object.values(perPlayer)) {
     Object.assign(p, { streak: streakOf(p.weeks) });
     p.points = Math.round(p.points);
+    p.contractPts = Math.round(p.contractPts ?? 0);
+    p.contractKills = p.contractKills ?? 0;
     p.seasonPoints = Math.round(p.seasonPoints);
     p.avgSpanDays = p.spans.length ? p.spans.reduce((s, x) => s + x.days, 0) / p.spans.length : null;
     p.closerRate = p.started ? p.perfects / p.started : 0;
@@ -296,6 +344,19 @@ export function buildClubStats(clubData, meta, settings) {
 
   const board = Object.values(perPlayer).sort((a, b) => b.points - a.points);
   const seasonBoard = [...board].sort((a, b) => b.seasonPoints - a.seasonPoints);
+  const contractBoard = [...board].sort((a, b) => b.contractPts - a.contractPts);
+
+  // enriched contract list for the Wheel page: fulfilled if the game hit
+  // 100% at/after acceptance (for public bounties: any member)
+  const contractView = contracts.map((c) => {
+    const g = games.find((x) => Number(x.appid) === Number(c.appid));
+    const holders = c.steamid ? [c.steamid] : members.map((m) => m.steamid);
+    const fulfilledBy = holders.filter((sid) => {
+      const r = g?.players[sid];
+      return r?.complete && r.lastUnlock >= c.epoch;
+    });
+    return { ...c, gameName: g?.name ?? `App ${c.appid}`, diff: g?.diff, fulfilledBy };
+  });
   const histogram = Array.from({ length: 10 }, (_, i) => ({
     diff: i + 1, games: games.filter((g) => g.diff === i + 1).length,
   }));
@@ -313,8 +374,92 @@ export function buildClubStats(clubData, meta, settings) {
   );
 
   return {
-    games, byId, board, seasonBoard, season: quarterOf(), events, feed,
+    games, byId, board, seasonBoard, contractBoard, contractView,
+    season: quarterOf(), events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
     histogram, scatter, clubTotals, perPlayer, profilesPlaytime,
   };
+}
+
+
+// ---------------------------------------------------------------
+// computeHunt — standings for one monthly hunt.
+// hunt.achievements: [{appid, id, name, pct, base}]
+// games: stats.games (carry every player's unlocks with timestamps)
+//
+// Rules: within the hunt month, finish order per achievement earns
+// base × [1, .8, .6, .4, then .2 for everyone after]. Anyone who
+// already had the achievement BEFORE the month gets flat veteran
+// credit (base × veteranCredit, default 0.6) and does not occupy
+// a place slot — history is rewarded, the podium stays live.
+// ---------------------------------------------------------------
+export function computeHunt(hunt, games, members, cfg = {}) {
+  const PLACE = [1, 0.8, 0.6, 0.4];
+  const vet = cfg.veteranCredit ?? 0.6;
+  const [y, m] = hunt.month.split("-").map(Number);
+  const start = new Date(y, m - 1, 1).getTime() / 1000;
+  const end = new Date(y, m, 1).getTime() / 1000;
+
+  const gameById = Object.fromEntries(games.map((g) => [Number(g.appid), g]));
+  const totals = Object.fromEntries(members.map((mm) => [mm.steamid, { pts: 0, captures: 0, veteran: 0 }]));
+
+  const board = hunt.achievements.map((a) => {
+    const g = gameById[Number(a.appid)];
+    const rows = [];
+    for (const mm of members) {
+      const u = g?.players[mm.steamid]?.unlocks.find((x) => x.id === a.id);
+      if (u?.t) rows.push({ sid: mm.steamid, t: u.t });
+    }
+    const veterans = rows.filter((r) => r.t < start);
+    const racers = rows.filter((r) => r.t >= start && r.t < end).sort((x, z) => x.t - z.t);
+    const results = [];
+    for (const v of veterans) {
+      const pts = Math.round(a.base * vet);
+      totals[v.sid].pts += pts; totals[v.sid].veteran += 1;
+      results.push({ sid: v.sid, place: "vet", pts, t: v.t });
+    }
+    racers.forEach((r, i) => {
+      const mult = PLACE[i] ?? 0.2;
+      const pts = Math.round(a.base * mult);
+      totals[r.sid].pts += pts;
+      if (i === 0) totals[r.sid].captures += 1;
+      results.push({ sid: r.sid, place: i + 1, pts, t: r.t });
+    });
+    return { ...a, gameName: g?.name ?? `App ${a.appid}`, results };
+  });
+
+  const standings = members
+    .map((mm) => ({ sid: mm.steamid, ...totals[mm.steamid] }))
+    .sort((x, z) => z.pts - x.pts);
+  return { board, standings, start, end, winner: standings[0]?.pts > 0 ? standings[0].sid : null };
+}
+
+// Suggested hunt slate: mostly "important" (rarity as proxy — big
+// milestones trend rare), a few wildcards. Curate before locking in.
+export function suggestHuntAchievements(games, appids, perGame = 20) {
+  const picks = [];
+  for (const appid of appids) {
+    const g = games.find((x) => Number(x.appid) === Number(appid));
+    if (!g) continue;
+    const sorted = [...g.ach].sort((a, b) => a.pct - b.pct); // rarest first
+    const n = Math.min(perGame, sorted.length);
+    const nRare = Math.round(n * 0.6), nMid = Math.round(n * 0.25);
+    const half = sorted.slice(0, Math.ceil(sorted.length / 2));
+    const mid = sorted.slice(Math.ceil(sorted.length / 4), Math.ceil(sorted.length * 3 / 4));
+    const chosen = new Set();
+    const draw = (pool, count) => {
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      for (const a of shuffled) {
+        if (chosen.size >= n) return;
+        if (count-- <= 0) return;
+        if (![...chosen].some((c) => c.id === a.id)) chosen.add(a);
+      }
+    };
+    draw(half, nRare); draw(mid, nMid); draw(sorted, n); // fill remainder randomly
+    for (const a of chosen) {
+      picks.push({ appid: Number(appid), id: a.id, name: a.name, pct: a.pct,
+        base: Math.max(5, Math.round(30 / Math.sqrt(Math.max(a.pct, 0.05)))) });
+    }
+  }
+  return picks;
 }
