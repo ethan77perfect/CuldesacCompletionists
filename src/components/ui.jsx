@@ -27,7 +27,7 @@ export const S = {
   page: { minHeight: "100vh", background: "var(--bg)", color: "var(--ink)", fontFamily: "'Inter', system-ui, sans-serif", paddingBottom: 64 },
   wrap: { maxWidth: 1060, margin: "0 auto", padding: "0 20px" },
   panel: { background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: 18 },
-  label: { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--muted)", fontWeight: 600 },
+  label: { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--label, var(--muted))", fontWeight: 600 },
   display: { fontFamily: "'Barlow Condensed', 'Arial Narrow', sans-serif" },
   input: { background: "var(--bg)", border: "1px solid var(--border2)", borderRadius: 6, color: "var(--ink)", padding: "9px 12px", fontSize: 14, width: "100%", boxSizing: "border-box" },
   btn: { background: "var(--accent)", color: "var(--accent-ink)", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" },

@@ -199,7 +199,7 @@ export default function App() {
         body, .panel-hover { transition: background .25s, border-color .25s, color .25s; }
         .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
         .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
-        [data-mode="light"] .card-lift:hover { box-shadow: 0 6px 16px rgba(40,35,25,.14); }
+        [data-mode="light"] .card-lift:hover, [data-mode="game"] .card-lift:hover { box-shadow: 0 6px 16px rgba(30,30,25,.18); }
         @keyframes pointer-kick { 0% { transform: translateX(-50%) rotate(0); } 35% { transform: translateX(-50%) rotate(10deg); } 100% { transform: translateX(-50%) rotate(0); } }
         .wheel-pointer { transform: translateX(-50%); animation: pointer-kick .12s ease-out; }
         @media (prefers-reduced-motion: reduce) { .wheel-pointer { animation: none; } }
@@ -229,7 +229,7 @@ export default function App() {
         [data-surface="neon"] h1 { text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); }
         @media (prefers-reduced-motion: reduce){ *{ transition:none !important } }`}</style>
 
-      <div style={{ borderBottom: "1px solid var(--border)", background: "var(--header)", backgroundImage: "linear-gradient(to right, var(--accent) 0%, transparent 40%)", backgroundSize: "100% 2px", backgroundRepeat: "no-repeat", backgroundPosition: "bottom" }}>
+      <div style={{ borderBottom: "1px solid var(--border)", background: "var(--header)", backgroundImage: "linear-gradient(to right, var(--accent) 0%, var(--accent2, var(--accent)) 30%, transparent 65%)", backgroundSize: "100% 2px", backgroundRepeat: "no-repeat", backgroundPosition: "bottom" }}>
         <div style={{ ...S.wrap, padding: "24px 20px 0" }}>
           <h1 style={{ ...S.display, fontSize: 40, fontWeight: 700, margin: 0, color: "var(--ink-strong)", letterSpacing: "0.02em", cursor: "pointer" }}
             onClick={() => nav("/home")}>THE 100% CLUB</h1>
@@ -462,7 +462,7 @@ export default function App() {
                 {Object.entries(MODES).map(([id, label]) => (
                   <button key={id} onClick={() => setColorMode(id)}
                     style={{ ...S.btnGhost, ...(colorMode === id ? { color: "var(--accent)", borderColor: "var(--accent-border)", fontWeight: 700 } : {}) }}>
-                    {id === "dark" ? "🌙 " : "☀️ "}{label}
+                    {id === "dark" ? "🌙 " : id === "light" ? "☀️ " : "🎮 "}{label}
                   </button>
                 ))}
               </div>
@@ -472,7 +472,7 @@ export default function App() {
                     <input type="radio" name="theme" checked={theme === id} onChange={() => setTheme(id)}
                       style={{ accentColor: "var(--accent)" }} />
                     <span style={{ display: "flex", gap: 3 }}>
-                      {["--bg", "--panel", "--accent"].map((v) => (
+                      {["--bg", "--panel", "--accent", "--accent2"].filter((v) => (t[colorMode] ?? t.dark)[v]).map((v) => (
                         <span key={v} style={{ width: 14, height: 14, borderRadius: 4, background: (t[colorMode] ?? t.dark)[v], border: "1px solid var(--border2)" }} />
                       ))}
                     </span>
