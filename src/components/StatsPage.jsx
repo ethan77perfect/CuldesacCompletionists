@@ -29,7 +29,7 @@ export default function StatsPage({ stats, nav, members }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
           <div style={S.label}>Club points over time</div>
           <div style={{ display: "flex", gap: 6 }}>
@@ -55,7 +55,7 @@ export default function StatsPage({ stats, nav, members }) {
         ) : <p style={{ color: "var(--muted)", fontSize: 13 }}>Unlock some achievements and the race chart appears here.</p>}
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Library by difficulty</div>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={stats.histogram}>
@@ -71,7 +71,7 @@ export default function StatsPage({ stats, nav, members }) {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>Club records</div>
           {recordRows.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>Records are earned, not given.</p>}
           {recordRows.map(([l, v]) => (
@@ -82,7 +82,7 @@ export default function StatsPage({ stats, nav, members }) {
           ))}
         </div>
 
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>Hall of fame — rarest unlocks</div>
           <div style={{ display: "grid", gap: 8, maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
             {hallOfFame.map((e, i) => (
@@ -99,7 +99,7 @@ export default function StatsPage({ stats, nav, members }) {
         </div>
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity — hard-earned sinks lower</div>
         <ResponsiveContainer width="100%" height={300}>
           <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
@@ -121,7 +121,7 @@ export default function StatsPage({ stats, nav, members }) {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>Completion velocity</div>
           {board.map((p) => (
             <div key={p.steamid} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 8 }}>
@@ -133,7 +133,7 @@ export default function StatsPage({ stats, nav, members }) {
           ))}
         </div>
 
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>The graveyard 🪦 — untouched 6+ months</div>
           {graveyard.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>Empty. The club leaves no game behind.</p>}
           <div style={{ display: "grid", gap: 8, maxHeight: 260, overflowY: "auto", paddingRight: 4 }}>

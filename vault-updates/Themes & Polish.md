@@ -1,12 +1,16 @@
 ---
 type: feature
 status: live
-files: [src/lib/themes.js, src/components/ui.jsx]
+files: [src/lib/themes.js, src/components/ui.jsx, src/App.jsx]
 ---
-# Themes & Polish
+# Themes & Surfaces
 
-**What it does** — five game-inspired dark palettes, picked per device in Settings: House of Hades, Pale Court, Golden Berry, Junimo Grove, Aperture. Card hover lift, gradient header rule, themed scrollbars.
+**What it does** — 12 game-inspired dark palettes × 3 surfaces (Solid / Glass / Neon), picked per device in Settings. Glass = frosted panels via backdrop-blur over an ambient accent glow; Neon = accent halo.
 
-**How it works** — every UI color is a CSS variable; a theme = a var set applied to `<html>`. Semantic colors (difficulty scale, rarity tiers, member colors) stay fixed. Add a theme = add an entry in themes.js.
+**How it works** — every UI color is a CSS variable; a theme is a var set applied to `<html>`. Surfaces are CSS rules keyed off `data-surface` on `<html>`, targeting the `.panel` class. Add a theme = one entry in themes.js; add a surface = one CSS block + one SURFACES entry.
 
-**Limitation** — all-dark on purpose; a true light theme means auditing charts/tiers.
+**Naming note** — the original navy+gold is "Campfire · Outer Wilds" (default); "House of Hades" is now actually red.
+
+## Tweak ideas
+- [ ] More surfaces: scanlines/CRT, paper grain
+- [ ] A true light theme (requires auditing charts + rarity tier colors)

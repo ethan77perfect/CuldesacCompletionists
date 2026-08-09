@@ -102,7 +102,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ ...S.panel, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         {[["personal", "Personal wheel · 1.5×"], ["public", "Public bounty · 2×"]].map(([k, l]) => (
           <button key={k} style={{ ...S.btnGhost, ...(mode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
             onClick={() => { setMode(k); setResult(null); }}>{l}</button>
@@ -120,7 +120,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         </span>
       </div>
 
-      <div style={{ ...S.panel, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
         <div style={{ position: "relative", width: 320, height: 330 }}>
           <div style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 2,
             width: 0, height: 0, borderLeft: "12px solid transparent", borderRight: "12px solid transparent",
@@ -178,7 +178,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         </div>
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Contract ledger</div>
         {stats.contractView.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>No contracts yet. The wheel awaits.</p>}
         <div style={{ display: "grid", gap: 10 }}>

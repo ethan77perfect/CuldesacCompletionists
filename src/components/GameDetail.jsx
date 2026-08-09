@@ -25,7 +25,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <Dial value={g.diff} size={56} />
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ ...S.display, fontSize: 28, fontWeight: 700, color: "var(--ink-strong)" }}>{g.name}</div>
@@ -41,7 +41,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
         </button>
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 8 }}>Club notes</div>
         <textarea style={{ ...S.input, minHeight: 70, resize: "vertical", fontFamily: "inherit" }}
           placeholder="Tips for the club — missables, order, warnings…"
@@ -55,7 +55,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
         )}
       </div>
 
-      <div style={{ ...S.panel, overflowX: "auto" }}>
+      <div className="panel" style={{ ...S.panel, overflowX: "auto" }}>
         <div style={{ ...S.label, marginBottom: 12 }}>Achievements — rarest first</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
@@ -97,7 +97,7 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
           const r = g.players[m.steamid];
           const hours = statsHours(stats, m.steamid, g.appid);
           return (
-            <div key={m.steamid} style={S.panel}>
+            <div key={m.steamid} className="panel" style={S.panel}>
               <a style={{ ...S.link, fontWeight: 600, fontSize: 15 }} onClick={() => nav(`/player/${m.steamid}`)}>{m.name}</a>
               <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6 }}>
                 {r.complete ? `★ 100% on ${fmtDate(r.lastUnlock)}` : `${r.pct}% · ${r.missing.length} to go`}

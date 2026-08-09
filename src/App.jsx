@@ -36,7 +36,7 @@ import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
-import { THEMES, DEFAULT_THEME, applyTheme } from "./lib/themes.js";
+import { THEMES, SURFACES, DEFAULT_THEME, DEFAULT_SURFACE, applyTheme, applySurface } from "./lib/themes.js";
 
 // ---- tiny hash router ----
 // The URL hash ("#/game/123") is our page address. Why hash instead
@@ -90,7 +90,9 @@ export default function App() {
   const [libSearch, setLibSearch] = useState("");
   const [boardMode, setBoardMode] = useState("all");
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? DEFAULT_THEME);
+  const [surface, setSurface] = useState(() => localStorage.getItem("surface") ?? DEFAULT_SURFACE);
   useEffect(() => { applyTheme(theme); }, [theme]);
+  useEffect(() => { applySurface(surface); }, [surface]);
 
   const [loadProgress, setLoadProgress] = useState(null);
 
@@ -187,7 +189,7 @@ export default function App() {
   const pts = (p) => (boardMode === "season" ? p.seasonPoints : boardMode === "contracts" ? p.contractPts : p.points);
 
   return (
-    <div style={S.page}>
+    <div className="app-bg" style={S.page}>
       <style>{`
         .tab { background:none; border:none; color:var(--muted); font:600 13px Inter,sans-serif; letter-spacing:.08em; text-transform:uppercase; padding:10px 2px; margin-right:22px; cursor:pointer; border-bottom:2px solid transparent; }
         .tab.on { color:var(--accent); border-bottom-color:var(--accent); }
@@ -200,6 +202,25 @@ export default function App() {
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+        /* ---- surfaces ---- */
+        [data-surface="glass"] .app-bg {
+          background-image:
+            radial-gradient(900px 500px at 15% -5%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
+            radial-gradient(800px 600px at 100% 30%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 55%),
+            radial-gradient(700px 500px at 40% 110%, color-mix(in srgb, var(--ink) 4%, transparent), transparent 60%);
+        }
+        [data-surface="glass"] .panel {
+          background: color-mix(in srgb, var(--panel) 52%, transparent) !important;
+          backdrop-filter: blur(14px) saturate(1.25);
+          -webkit-backdrop-filter: blur(14px) saturate(1.25);
+          border-color: color-mix(in srgb, var(--ink) 14%, transparent) !important;
+        }
+        [data-surface="neon"] .panel {
+          box-shadow: 0 0 0 1px var(--accent-border), 0 0 22px -10px var(--accent);
+        }
+        [data-surface="neon"] .tab.on { text-shadow: 0 0 12px var(--accent); }
+        [data-surface="neon"] h1 { text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); }
         @media (prefers-reduced-motion: reduce){ *{ transition:none !important } }`}</style>
 
       <div style={{ borderBottom: "1px solid var(--border)", background: "var(--header)", backgroundImage: "linear-gradient(to right, var(--accent) 0%, transparent 40%)", backgroundSize: "100% 2px", backgroundRepeat: "no-repeat", backgroundPosition: "bottom" }}>
@@ -216,15 +237,15 @@ export default function App() {
 
       <div style={{ ...S.wrap, marginTop: 24 }}>
         {error && (
-          <div style={{ ...S.panel, borderColor: "var(--err-border)", background: "var(--err-bg)", marginBottom: 14, fontSize: 13 }}>
+          <div className="panel" style={{ ...S.panel, borderColor: "var(--err-border)", background: "var(--err-bg)", marginBottom: 14, fontSize: 13 }}>
             {error} <button style={{ ...S.btnGhost, marginLeft: 10 }} onClick={loadAll}>Retry</button>
           </div>
         )}
         {notice && (
-          <div style={{ ...S.panel, borderColor: "var(--accent-border)", background: "var(--ok-bg)", marginBottom: 14, fontSize: 13, color: "var(--accent)" }}>{notice}</div>
+          <div className="panel" style={{ ...S.panel, borderColor: "var(--accent-border)", background: "var(--ok-bg)", marginBottom: 14, fontSize: 13, color: "var(--accent)" }}>{notice}</div>
         )}
         {loadProgress && (
-          <div style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
+          <div className="panel" style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
             <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
             <div style={{ flex: 1, background: "var(--border)", borderRadius: 3, height: 6 }}>
               <div style={{ width: `${(loadProgress.done / Math.max(loadProgress.total, 1)) * 100}%`, background: "var(--accent)", height: 6, borderRadius: 3, transition: "width .3s" }} />
@@ -235,7 +256,7 @@ export default function App() {
         {meta && !clubData && !error && <div style={{ color: "var(--muted)", padding: 40, textAlign: "center" }}>Pulling achievements from Steam…</div>}
 
         {empty && page !== "settings" && (
-          <div style={{ ...S.panel, textAlign: "center", padding: 40 }}>
+          <div className="panel" style={{ ...S.panel, textAlign: "center", padding: 40 }}>
             <div style={{ ...S.display, fontSize: 26, fontWeight: 700, color: "var(--ink-strong)" }}>The club is empty</div>
             <p style={{ color: "var(--muted)", fontSize: 14 }}>Add members and games in Settings to bring it to life.</p>
             <button style={S.btn} onClick={() => nav("/settings")}>Open settings</button>
@@ -266,7 +287,7 @@ export default function App() {
               ))}
             </div>
             {board.map((p, i) => (
-              <div key={p.steamid} style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+              <div key={p.steamid} className="panel" style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ ...S.display, fontSize: 32, fontWeight: 700, color: i === 0 ? "var(--accent)" : "var(--faint)", width: 36 }}>{i + 1}</div>
                 <Avatar url={p.avatar} color={p.color} size={44} />
                 <div style={{ flex: "1 1 150px" }}>
@@ -323,7 +344,7 @@ export default function App() {
                   return b.diff - a.diff;
                 })
                 .map((g) => (
-                  <div key={g.appid} className="card-lift" style={{ ...S.panel, cursor: "pointer" }} onClick={() => nav(`/game/${g.appid}`)}>
+                  <div key={g.appid} className="card-lift panel" style={{ ...S.panel, cursor: "pointer" }} onClick={() => nav(`/game/${g.appid}`)}>
                     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                       <Dial value={g.diff} />
                       <div style={{ minWidth: 0 }}>
@@ -362,7 +383,7 @@ export default function App() {
 
         {meta && page === "settings" && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Club key</div>
               <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 0 }}>
                 Needed to add or remove anything — it's the CLUB_KEY from deployment. Share it with your friends.
@@ -371,7 +392,7 @@ export default function App() {
                 onChange={(e) => { setClubKey(e.target.value); localStorage.setItem("clubKey", e.target.value); }} />
             </div>
 
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Members</div>
               {meta.members.map((m) => (
                 <div key={m.steamid} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -395,7 +416,7 @@ export default function App() {
               </button>
             </div>
 
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Tracked games ({meta.games.length})</div>
               {meta.games.length > 5 && (
                 <input style={{ ...S.input, marginBottom: 10 }} placeholder="Search games…"
@@ -429,7 +450,7 @@ export default function App() {
               </button>
             </div>
 
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Theme</div>
               <div style={{ display: "grid", gap: 8 }}>
                 {Object.entries(THEMES).map(([id, t]) => (
@@ -445,10 +466,19 @@ export default function App() {
                   </label>
                 ))}
               </div>
-              <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 10 }}>Saved per device — everyone picks their own.</p>
+              <div style={{ ...S.label, margin: "16px 0 8px" }}>Surface</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {Object.entries(SURFACES).map(([id, label]) => (
+                  <button key={id} onClick={() => setSurface(id)}
+                    style={{ ...S.btnGhost, ...(surface === id ? { color: "var(--accent)", borderColor: "var(--accent-border)", fontWeight: 700 } : {}) }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 10 }}>Theme × surface, saved per device — everyone picks their own. Glass frosts the panels over an ambient glow; Neon adds an accent halo.</p>
             </div>
 
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 16 }}>Scoring rules</div>
               <Slider label="100% completion bonus" value={cfg.bonus} min={0} max={0.8} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, bonus: v })} fmt={(v) => `${Math.round(v * 100)}% of pool`} />

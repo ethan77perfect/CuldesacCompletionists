@@ -17,7 +17,7 @@ export default function Backlog({ meta, mutate, busy }) {
 
   return (
     <div style={{ display: "grid", gap: 14, maxWidth: 640 }}>
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 10 }}>Propose a game</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input style={{ ...S.input, flex: "1 1 260px" }} placeholder="Steam store URL or appid"
@@ -37,7 +37,7 @@ export default function Backlog({ meta, mutate, busy }) {
         </div>
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>The ballot ({sorted.length})</div>
         {sorted.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>No proposals yet. Start the argument.</p>}
         {sorted.map((b) => {

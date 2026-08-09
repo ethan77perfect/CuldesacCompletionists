@@ -20,7 +20,7 @@ export default function Home({ stats, nav }) {
 
   return (
     <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-      <div style={{ ...S.panel, gridColumn: "1 / -1", display: "flex", gap: 28, flexWrap: "wrap" }}>
+      <div className="panel" style={{ ...S.panel, gridColumn: "1 / -1", display: "flex", gap: 28, flexWrap: "wrap" }}>
         {[["Perfect games", clubTotals.perfects], ["Club points", clubTotals.points.toLocaleString()], ["Achievements unlocked", clubTotals.unlocks.toLocaleString()]].map(([l, v]) => (
           <div key={l}>
             <div style={S.label}>{l}</div>
@@ -29,7 +29,7 @@ export default function Home({ stats, nav }) {
         ))}
       </div>
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Activity</div>
         {feed.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>No unlocks yet — go earn something.</p>}
         <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
@@ -64,7 +64,7 @@ export default function Home({ stats, nav }) {
 
       <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
         {challenge && (
-          <div style={{ ...S.panel, borderColor: "var(--accent-border)" }}>
+          <div className="panel" style={{ ...S.panel, borderColor: "var(--accent-border)" }}>
             <div style={{ ...S.label, marginBottom: 10 }}>Monthly challenge · {challenge.month}</div>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 10 }}>
               <Dial value={challenge.game.diff} size={38} />
@@ -83,7 +83,7 @@ export default function Home({ stats, nav }) {
         )}
 
         {races.length > 0 && (
-          <div style={S.panel}>
+          <div className="panel" style={S.panel}>
             <div style={{ ...S.label, marginBottom: 10 }}>Races</div>
             {races.map((r) => (
               <div key={r.appid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 8 }}>
@@ -98,7 +98,7 @@ export default function Home({ stats, nav }) {
           </div>
         )}
 
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>Closest finishes in the club</div>
           {closest.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>Nothing in progress.</p>}
           {closest.map((r) => {

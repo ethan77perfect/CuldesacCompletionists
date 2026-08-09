@@ -26,7 +26,7 @@ export default function PlayerPage({ stats, sid, nav }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ ...S.panel, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
         <Avatar url={p.avatar} color={p.color} size={72} />
         <div style={{ flex: 1, minWidth: 180 }}>
           <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: p.color }}>{p.name}</div>
@@ -52,7 +52,7 @@ export default function PlayerPage({ stats, sid, nav }) {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>Perfect shelf ({perfectGames.length})</div>
           {perfectGames.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>The shelf awaits its first trophy.</p>}
           <div style={{ display: "grid", gap: 10, maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
@@ -67,7 +67,7 @@ export default function PlayerPage({ stats, sid, nav }) {
         </div>
 
         <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
-          <div style={S.panel}>
+          <div className="panel" style={S.panel}>
             <div style={{ ...S.label, marginBottom: 12 }}>Next easiest 100%s</div>
             {inProgress.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>Nothing in progress.</p>}
             {inProgress.map((r) => (
@@ -78,7 +78,7 @@ export default function PlayerPage({ stats, sid, nav }) {
             ))}
           </div>
 
-          <div style={S.panel}>
+          <div className="panel" style={S.panel}>
             <div style={{ ...S.label, marginBottom: 12 }}>Signature stats</div>
             <div style={{ fontSize: 13, display: "grid", gap: 8 }}>
               <div>Rarest unlock: {p.rarestUnlock ? (

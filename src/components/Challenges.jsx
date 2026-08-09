@@ -22,7 +22,7 @@ export default function Challenges({ stats, meta, mutate, busy }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ ...S.panel, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
         <span style={{ color: "var(--muted)" }}>Claiming as</span>
         <select value={me} onChange={(e) => setMe(e.target.value)} style={{ ...S.input, width: "auto" }}>
           {meta.members.map((m) => <option key={m.steamid} value={m.steamid}>{m.name}</option>)}
@@ -31,14 +31,14 @@ export default function Challenges({ stats, meta, mutate, busy }) {
       </div>
 
       {Object.keys(byCategory).length === 0 && (
-        <div style={{ ...S.panel, textAlign: "center", padding: 32, color: "var(--muted)", fontSize: 14 }}>
+        <div className="panel" style={{ ...S.panel, textAlign: "center", padding: 32, color: "var(--muted)", fontSize: 14 }}>
           No challenges yet. Celeste's Strawberry Jam lobbies are begging to be the first —
           try "Clear the Beginner Lobby heartside" at difficulty 4, and climb from there.
         </div>
       )}
 
       {Object.entries(byCategory).map(([cat, list]) => (
-        <div key={cat} style={S.panel}>
+        <div key={cat} className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 12 }}>{cat}</div>
           <div style={{ display: "grid", gap: 12 }}>
             {list.map((ch) => {
@@ -94,7 +94,7 @@ export default function Challenges({ stats, meta, mutate, busy }) {
         </div>
       ))}
 
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Propose a challenge</div>
         <div style={{ display: "grid", gap: 8, gridTemplateColumns: "2fr 1fr", alignItems: "center" }}>
           <input style={S.input} placeholder='Title — e.g. "Clear Strawberry Jam: Advanced heartside"'

@@ -42,7 +42,7 @@ export default function Compare({ stats, meta, nav }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ ...S.panel, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
         <Avatar url={A?.avatar} color={A?.color} size={52} />
         {sel(a, setA)}
         <div style={{ ...S.display, fontSize: 30, fontWeight: 700, color: "var(--faint)" }}>
@@ -54,7 +54,7 @@ export default function Compare({ stats, meta, nav }) {
 
       {a === b ? <p style={{ color: "var(--muted)", textAlign: "center" }}>Pick two different people — self-reflection is a different website.</p> : (
         <>
-          <div style={{ ...S.panel, display: "flex", gap: 26, flexWrap: "wrap", justifyContent: "center" }}>
+          <div className="panel" style={{ ...S.panel, display: "flex", gap: 26, flexWrap: "wrap", justifyContent: "center" }}>
             {[
               ["Points", A.points.toLocaleString(), B.points.toLocaleString()],
               ["Perfects", A.perfects, B.perfects],
@@ -72,7 +72,7 @@ export default function Compare({ stats, meta, nav }) {
             ))}
           </div>
 
-          <div style={S.panel}>
+          <div className="panel" style={S.panel}>
             <div style={{ ...S.label, marginBottom: 12 }}>Shared games ({shared.length}) — click one for the gap analysis</div>
             <div style={{ display: "grid", gap: 12, maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
               {rows.map(({ g, ra, rb, lead }) => (
@@ -99,7 +99,7 @@ export default function Compare({ stats, meta, nav }) {
           </div>
 
           {gap && (
-            <div style={S.panel}>
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Gap analysis — {gap.g.name}</div>
               <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
                 {[[A, gap.ra, gap.rb], [B, gap.rb, gap.ra]].map(([P, mine, theirs]) => {

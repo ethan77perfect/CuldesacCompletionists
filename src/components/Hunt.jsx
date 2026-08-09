@@ -35,7 +35,7 @@ export default function Hunt({ stats, meta, mutate, busy, nav }) {
 
       {tab === "current" && (active
         ? <ActiveHunt hunt={active} stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />
-        : <div style={{ ...S.panel, textAlign: "center", padding: 36 }}>
+        : <div className="panel" style={{ ...S.panel, textAlign: "center", padding: 36 }}>
             <div style={{ ...S.display, fontSize: 24, fontWeight: 700 }}>No hunt this month</div>
             <p style={{ color: "var(--muted)", fontSize: 14 }}>Someone with the club key should fix that.</p>
             <button style={S.btn} onClick={() => setTab("create")}>Create a hunt</button>
@@ -60,7 +60,7 @@ function ActiveHunt({ hunt, stats, meta, mutate, busy, nav }) {
 
   return (
     <>
-      <div style={{ ...S.panel, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="panel" style={{ ...S.panel, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
         <div>
           <div style={S.label}>Hunt · {hunt.month}</div>
           <div style={{ ...S.display, fontSize: 26, fontWeight: 700, color: "var(--ink-strong)" }}>
@@ -83,7 +83,7 @@ function ActiveHunt({ hunt, stats, meta, mutate, busy, nav }) {
       </div>
 
       {Object.entries(byGame).map(([gName, achs]) => (
-        <div key={gName} style={S.panel}>
+        <div key={gName} className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>{gName}</div>
           <div style={{ display: "grid", gap: 8 }}>
             {achs.sort((a, b) => b.base - a.base).map((a) => (
@@ -111,7 +111,7 @@ function ActiveHunt({ hunt, stats, meta, mutate, busy, nav }) {
 
 function HallOfFame({ finished, stats }) {
   if (!finished.length) return (
-    <div style={{ ...S.panel, textAlign: "center", padding: 36, color: "var(--muted)" }}>
+    <div className="panel" style={{ ...S.panel, textAlign: "center", padding: 36, color: "var(--muted)" }}>
       The hall stands empty. Finish a hunt and hang the first banner.
     </div>
   );
@@ -121,7 +121,7 @@ function HallOfFame({ finished, stats }) {
         const standings = h.final ?? [];
         const w = standings[0];
         return (
-          <div key={h.month} className="card-lift" style={{ ...S.panel, borderColor: "var(--accent-border)" }}>
+          <div key={h.month} className="card-lift panel" style={{ ...S.panel, borderColor: "var(--accent-border)" }}>
             <div style={S.label}>{h.month}</div>
             <div style={{ ...S.display, fontSize: 26, fontWeight: 700, color: "var(--accent)", margin: "6px 0" }}>
               👑 {w ? (stats.byId[w.sid]?.name ?? "?") : "—"}
@@ -173,7 +173,7 @@ function CreateHunt({ stats, meta, mutate, busy, onDone }) {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={S.panel}>
+      <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 10 }}>1 · Pick 5 games ({picked.length}/5)</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <button style={S.btn} onClick={spinOne} disabled={picked.length >= 5}>🎡 Spin for one</button>
@@ -190,7 +190,7 @@ function CreateHunt({ stats, meta, mutate, busy, onDone }) {
       </div>
 
       {picked.length > 0 && (
-        <div style={S.panel}>
+        <div className="panel" style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>2 · The slate</div>
           {!slate && <button style={S.btn} onClick={generate}>Generate slate (~20/game: mostly milestones, a few wildcards)</button>}
           {slate && (
