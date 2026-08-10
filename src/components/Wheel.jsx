@@ -110,7 +110,9 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
     if (!built.length || spinning) return;
     const winner = pickWeighted(built);
     const landing = winner.start + winner.sweep * (0.2 + Math.random() * 0.6);
-    const turns = 5 + Math.random() * 1.5;
+    // turns MUST be a whole number — fractional turns shift the landing
+    // angle off the chosen slice (the "highlights a different slice" bug)
+    const turns = 5 + Math.floor(Math.random() * 2);
     const from = rotRef.current;
     const target = from - (from % 360) + turns * 360 + (360 - landing);
     const total = target - from;
@@ -128,7 +130,15 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
       const idx = sliceAt(rot);
       if (idx !== lastIdx) { lastIdx = idx; setCurrent(idx); setTick((k) => k + 1); }
       if (t < 1) rafRef.current = requestAnimationFrame(frame);
-      else { setSpinning(false); setResult(slices[winner.idx]); setCurrent(winner.idx); }
+      else {
+        // snap to the exact target and read the result from where the
+        // wheel PHYSICALLY stopped — pointer, highlight, drum, and the
+        // contract can never disagree
+        rotRef.current = target;
+        if (gRef.current) gRef.current.style.transform = `rotate(${target}deg)`;
+        const finalIdx = sliceAt(target);
+        setSpinning(false); setResult(slices[finalIdx]); setCurrent(finalIdx);
+      }
     };
     rafRef.current = requestAnimationFrame(frame);
   }
@@ -143,7 +153,12 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
     setResult(null);
   }
 
-  const activeBounty = stats.contractView.filter((c) => c.source === "public" && !c.fulfilledBy.length).slice(-1)[0];
+  const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
+  // one active contract per person: spinner is bound until they beat it or Monday clears it
+  const boundBy = mode === "personal"
+    ? stats.contractView.find((c) => c.steamid === spinner && c.status === "active")
+    : null;
+  const fmtExpiry = (t) => new Date(t * 1000).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 
   // drum readout: current slice ± 2 neighbors, curved away in perspective
   const drumRows = built.length ? [-2, -1, 0, 1, 2].map((off) => {
@@ -212,13 +227,13 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               ))}
             </g>
 
-            <g onClick={spin} style={{ cursor: spinning || !built.length ? "default" : "pointer" }}>
+            <g onClick={boundBy ? undefined : spin} style={{ cursor: spinning || !built.length || boundBy ? "default" : "pointer" }}>
               <circle cx={C} cy={C} r={R_HUB} fill="var(--panel)" stroke="var(--accent-border)" strokeWidth="3" />
               <circle cx={C} cy={C} r={R_HUB - 8} fill="none" stroke="var(--border)" strokeWidth="1.5" />
               <text x={C} y={C + 2} textAnchor="middle" dominantBaseline="middle" fontSize="20" fontWeight="700"
                 fill={spinning ? "var(--faint)" : "var(--accent)"}
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.14em", userSelect: "none" }}>
-                {spinning ? "· · ·" : "SPIN"}
+                {spinning ? "· · ·" : boundBy ? "BOUND" : "SPIN"}
               </text>
             </g>
           </svg>
@@ -254,13 +269,22 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
             {!drumRows.length && <p style={{ color: "var(--muted)", fontSize: 13 }}>No eligible games for this wheel.</p>}
           </div>
 
-          {!result && !spinning && drumRows.length > 0 && (
+          {boundBy && !spinning && (
+            <div style={{ background: "var(--accent-bg)", border: "1px solid var(--accent-border)", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+              <div style={{ ...S.label, marginBottom: 6 }}>Under contract</div>
+              <div style={{ fontSize: 14 }}>
+                <b style={{ color: "var(--accent)" }}>{boundBy.gameName}</b> at {boundBy.multiplier}× —
+                beat it to spin again, or the contract expires <b>{fmtExpiry(boundBy.expiry)}</b>.
+              </div>
+            </div>
+          )}
+          {!result && !spinning && !boundBy && drumRows.length > 0 && (
             <p style={{ color: "var(--muted)", fontSize: 13 }}>
               Hit the hub to spin.
               {activeBounty && mode === "public" && <> Active bounty: <b style={{ color: "var(--accent)" }}>{activeBounty.gameName}</b> at 2×.</>}
             </p>
           )}
-          {result && (
+          {result && !boundBy && (
             <div>
               <div style={{ ...S.label, marginBottom: 6 }}>The wheel has chosen</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -286,10 +310,12 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               <span style={{ color: "var(--muted)" }}>
                 {c.steamid ? <>· <b style={{ color: stats.byId[c.steamid]?.color }}>{stats.byId[c.steamid]?.name}</b></> : "· ⚡ club bounty"}
               </span>
-              {c.fulfilledBy.length > 0 ? (
+              {c.status === "fulfilled" ? (
                 <span style={{ color: "var(--accent)" }}>✓ fulfilled by {c.fulfilledBy.map((sid) => stats.byId[sid]?.name).join(", ")}</span>
+              ) : c.status === "active" ? (
+                <span style={{ color: "var(--muted)" }}>active · expires {fmtExpiry(c.expiry)}</span>
               ) : (
-                <span style={{ color: "var(--faint)" }}>open</span>
+                <span style={{ color: "var(--faint)" }}>✗ expired {fmtExpiry(c.expiry)}</span>
               )}
               <button style={{ ...S.btnGhost, marginLeft: "auto" }} disabled={busy}
                 onClick={() => mutate("abandonContract", { id: c.id }, () => "Contract torn up")}>✕</button>
