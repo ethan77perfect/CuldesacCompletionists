@@ -118,25 +118,15 @@ export function buildClubStats(clubData, meta, settings) {
   // A contract applies to (its player | everyone, if public bounty) for
   // events in that game unlocked AFTER acceptance. Overlapping contracts
   // don't stack — the highest multiplier wins.
-  // Contracts live for one week at most: accepted → next Monday 00:00
-  // (local). Beating the game fulfills early; Monday expires the rest.
-  const nextMonday = (epoch) => {
-    const d = new Date(epoch * 1000);
-    const days = ((8 - d.getDay()) % 7) || 7;   // accepted on a Monday → next Monday
-    const m = new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
-    return m.getTime() / 1000;
-  };
-  const contracts = (meta.contracts ?? []).map((c) => {
-    const epoch = Date.parse(c.accepted_at) / 1000;
-    return { ...c, epoch, expiry: nextMonday(epoch), multiplier: parseFloat(c.multiplier) };
-  });
-  // multiplier applies only inside the contract's live window
+  const contracts = (meta.contracts ?? []).map((c) => ({
+    ...c, epoch: Date.parse(c.accepted_at) / 1000, multiplier: parseFloat(c.multiplier),
+  }));
   const contractMult = (sid, appid, t) => {
     let m = 1;
     for (const c of contracts) {
       if (Number(c.appid) !== Number(appid)) continue;
       if (c.steamid && c.steamid !== sid) continue;
-      if (t >= c.epoch && t < c.expiry) m = Math.max(m, c.multiplier);
+      if (t >= c.epoch) m = Math.max(m, c.multiplier);
     }
     return m;
   };
@@ -358,16 +348,14 @@ export function buildClubStats(clubData, meta, settings) {
 
   // enriched contract list for the Wheel page: fulfilled if the game hit
   // 100% at/after acceptance (for public bounties: any member)
-  const nowSec = Date.now() / 1000;
   const contractView = contracts.map((c) => {
     const g = games.find((x) => Number(x.appid) === Number(c.appid));
     const holders = c.steamid ? [c.steamid] : members.map((m) => m.steamid);
     const fulfilledBy = holders.filter((sid) => {
       const r = g?.players[sid];
-      return r?.complete && r.lastUnlock >= c.epoch && r.lastUnlock < c.expiry;
+      return r?.complete && r.lastUnlock >= c.epoch;
     });
-    const status = fulfilledBy.length ? "fulfilled" : nowSec < c.expiry ? "active" : "expired";
-    return { ...c, gameName: g?.name ?? `App ${c.appid}`, diff: g?.diff, fulfilledBy, status };
+    return { ...c, gameName: g?.name ?? `App ${c.appid}`, diff: g?.diff, fulfilledBy };
   });
   const histogram = Array.from({ length: 10 }, (_, i) => ({
     diff: i + 1, games: games.filter((g) => g.diff === i + 1).length,
