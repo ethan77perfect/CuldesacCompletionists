@@ -76,10 +76,17 @@ function ActiveHunt({ hunt, stats, meta, mutate, busy, nav }) {
             </div>
           ))}
         </div>
-        <button style={S.btnGhost} disabled={busy}
-          onClick={() => mutate("finishHunt", { month: hunt.month, final: result.standings }, () => `Hunt ${hunt.month} closed — crown the winner!`)}>
-          End hunt
-        </button>
+        <div style={{ display: "flex", gap: 6, flexDirection: "column" }}>
+          <button style={S.btnGhost} disabled={busy}
+            onClick={() => mutate("finishHunt", { month: hunt.month, final: result.standings }, () => `Hunt ${hunt.month} closed — crown the winner!`)}>
+            End hunt → Hall of Fame
+          </button>
+          <button style={{ ...S.btnGhost, color: "var(--faint)" }} disabled={busy}
+            onClick={() => window.confirm("Scrap this hunt? It vanishes completely — no Hall of Fame record.") &&
+              mutate("deleteHunt", { month: hunt.month }, () => "Hunt scrapped — it never happened.")}>
+            Scrap (no record)
+          </button>
+        </div>
       </div>
 
       {Object.entries(byGame).map(([gName, achs]) => (
