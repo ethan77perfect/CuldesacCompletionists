@@ -275,7 +275,7 @@ export default function App() {
         {dataAsOf && (
           <div className="panel" style={{ ...S.panel, marginBottom: 14, padding: "8px 14px", fontSize: 12, color: "var(--muted)", display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ width: 8, height: 8, borderRadius: 4, background: "var(--accent)", animation: "pulse 1.4s ease-in-out infinite" }} />
-            Showing last night's snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…
+            Showing the latest snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…
           </div>
         )}
         {loadProgress && (

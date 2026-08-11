@@ -1,9 +1,13 @@
 // ---------------------------------------------------------------
 // /api/cron — the club's nightly heartbeat.
 //
-// Scheduled by vercel.json (daily, 08:00 UTC ≈ small hours US).
+// Runs at 10:00 PM Eastern, year-round: vercel.json triggers at both
+// 02:00 and 03:00 UTC (10pm EDT vs 10pm EST), and this handler checks
+// the real clock in America/New_York — it runs on the trigger that
+// lands at 10pm and silently skips the other. DST handles itself.
 // Manual test: open /api/cron?secret=YOUR_CRON_SECRET in a browser
-// (if CRON_SECRET isn't set, any request is allowed — set it!).
+// (manual runs skip the 10pm check; if CRON_SECRET isn't set, any
+// request is allowed — set it!).
 //
 // Each run:
 //   1. Fetch the ENTIRE club from Steam (shared lib, gentle pace)
@@ -21,6 +25,11 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData } from "../lib/steamFetch.js";
+
+const CLUB_TZ = "America/New_York";
+const tzPart = (type) =>
+  new Intl.DateTimeFormat("en-US", { timeZone: CLUB_TZ, hour: "numeric", hour12: false, weekday: "short" })
+    .formatToParts(new Date()).find((p) => p.type === type)?.value;
 
 const nextMonday = (epoch) => {
   const d = new Date(epoch * 1000);
@@ -45,6 +54,11 @@ export default async function handler(req, res) {
   if (secret) {
     const auth = req.headers.authorization === `Bearer ${secret}` || req.query.secret === secret;
     if (!auth) return res.status(401).json({ error: "Unauthorized" });
+  }
+  // Scheduled trigger (not a manual ?secret= test): only proceed at 10pm club time
+  const isManual = Boolean(req.query.secret);
+  if (!isManual && tzPart("hour") !== "22") {
+    return res.status(200).json({ ok: true, skipped: `not 10pm ${CLUB_TZ} on this trigger` });
   }
   const key = process.env.STEAM_API_KEY;
   if (!key) return res.status(500).json({ error: "STEAM_API_KEY not set" });
@@ -132,8 +146,9 @@ export default async function handler(req, res) {
       }
     }
   }
-  // Monday: contract week report + spin-day call
-  const isMonday = new Date().getUTCDay() === 1;
+  // Monday (club time): contract week report + spin-day call —
+  // posts Monday EVENING, wrapping the first day of the fresh week
+  const isMonday = tzPart("weekday") === "Mon";
   if (isMonday) {
     const lastWeek = contracts.data?.filter((c) => {
       const epoch = Date.parse(c.accepted_at) / 1000;
