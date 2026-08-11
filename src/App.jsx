@@ -96,6 +96,8 @@ export default function App() {
   useEffect(() => { applySurface(surface); }, [surface]);
 
   const [loadProgress, setLoadProgress] = useState(null);
+  const [dataAsOf, setDataAsOf] = useState(null);   // set while showing last night's snapshot
+  const [history, setHistory] = useState([]);       // daily aggregates for the progress chart
 
   async function loadAll() {
     setError("");
@@ -112,7 +114,22 @@ export default function App() {
         return;
       }
 
-      // Load in small batches so big clubs don't trip Steam rate limits.
+      // FIRST PAINT: last night's snapshot, instantly (if the cron has run).
+      let haveCache = false;
+      try {
+        const cRes = await fetch("/api/cached");
+        const c = await cRes.json();
+        if (cRes.ok && c.payload?.games?.length) {
+          setClubData(c.payload);
+          setDataAsOf(c.fetched_at);
+          haveCache = true;
+        }
+      } catch { /* no cache yet — fall through to live load */ }
+
+      // history chart data (non-critical; ignore failures)
+      fetch("/api/history").then((r) => r.json()).then((j) => setHistory(j.rows ?? [])).catch(() => {});
+
+      // THEN: live refresh in small batches so big clubs don't trip Steam rate limits.
       const sids = metaJson.members.map((m) => m.steamid).join(",");
       const appids = metaJson.games.map((g) => g.appid);
       const BATCH = 12;
@@ -122,7 +139,7 @@ export default function App() {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let games = [], profiles = {};
       for (let ci = 0; ci < chunks.length; ci++) {
-        setLoadProgress({ done: ci, total: chunks.length });
+        if (!haveCache) setLoadProgress({ done: ci, total: chunks.length });
         const url = `/api/club?steamids=${sids}&appids=${chunks[ci].join(",")}&profiles=${ci === 0 ? 1 : 0}`;
         let j = null;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -135,8 +152,12 @@ export default function App() {
         }
         games = games.concat(j.games);
         Object.assign(profiles, j.profiles ?? {});
-        setClubData({ games: [...games], profiles: { ...profiles } }); // progressive render
+        // with a cache on screen, swap in live data only once it's COMPLETE —
+        // partial live data replacing a full snapshot would look like regression
+        if (!haveCache) setClubData({ games: [...games], profiles: { ...profiles } });
       }
+      setClubData({ games, profiles });
+      setDataAsOf(null);
       setLoadProgress(null);
     } catch (e) {
       setLoadProgress(null);
@@ -200,6 +221,7 @@ export default function App() {
         .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
         .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
         [data-mode="light"] .card-lift:hover, [data-mode="game"] .card-lift:hover { box-shadow: 0 6px 16px rgba(30,30,25,.18); }
+        @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
         @keyframes pointer-kick { 0% { transform: translateX(-50%) rotate(0); } 35% { transform: translateX(-50%) rotate(10deg); } 100% { transform: translateX(-50%) rotate(0); } }
         .wheel-pointer { transform: translateX(-50%); animation: pointer-kick .12s ease-out; }
         @media (prefers-reduced-motion: reduce) { .wheel-pointer { animation: none; } }
@@ -250,6 +272,12 @@ export default function App() {
         {notice && (
           <div className="panel" style={{ ...S.panel, borderColor: "var(--accent-border)", background: "var(--ok-bg)", marginBottom: 14, fontSize: 13, color: "var(--accent)" }}>{notice}</div>
         )}
+        {dataAsOf && (
+          <div className="panel" style={{ ...S.panel, marginBottom: 14, padding: "8px 14px", fontSize: 12, color: "var(--muted)", display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: "var(--accent)", animation: "pulse 1.4s ease-in-out infinite" }} />
+            Showing last night's snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…
+          </div>
+        )}
         {loadProgress && (
           <div className="panel" style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
             <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
@@ -278,7 +306,7 @@ export default function App() {
         {stats && !empty && page === "game" && <GameDetail stats={stats} appid={param} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "player" && <PlayerPage stats={stats} sid={param} nav={nav} />}
         {stats && !empty && page === "compare" && <Compare stats={stats} meta={meta} nav={nav} />}
-        {stats && !empty && page === "stats" && <StatsPage stats={stats} nav={nav} members={meta.members} />}
+        {stats && !empty && page === "stats" && <StatsPage stats={stats} nav={nav} members={meta.members} history={history} />}
         {meta && page === "backlog" && <Backlog meta={meta} mutate={mutate} busy={busy} />}
         {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}

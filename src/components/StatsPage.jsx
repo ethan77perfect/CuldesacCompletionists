@@ -14,7 +14,18 @@ import { diffColor } from "./ui.jsx";
 import { chartInk } from "../lib/themes.js";
 import { S, TierChip, fmtDays, fmtDate } from "./ui.jsx";
 
-export default function StatsPage({ stats, nav, members }) {
+export default function StatsPage({ stats, nav, members, history = [] }) {
+  // snapshot history → one row per day with each member's perfect count
+  const historyRows = (() => {
+    if (!history.length) return [];
+    const byDay = new Map();
+    const nameOf = Object.fromEntries(members.map((m) => [m.steamid, m.name]));
+    for (const r of history) {
+      if (!byDay.has(r.day)) byDay.set(r.day, { day: r.day.slice(5) });
+      byDay.get(r.day)[nameOf[r.steamid] ?? r.steamid] = r.perfects;
+    }
+    return [...byDay.values()];
+  })();
   const { records, hallOfFame, graveyard, byId, scatter, board } = stats;
   const [range, setRange] = useState("12");
   const ink = chartInk();   // live theme colors for SVG chart attributes
@@ -56,6 +67,25 @@ export default function StatsPage({ stats, nav, members }) {
           </ResponsiveContainer>
         ) : <p style={{ color: "var(--muted)", fontSize: 13 }}>Unlock some achievements and the race chart appears here.</p>}
       </div>
+
+      {historyRows.length > 1 && (
+        <div className="panel" style={S.panel}>
+          <div style={{ ...S.label, marginBottom: 12 }}>Perfect games over time — from nightly snapshots</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={historyRows}>
+              <CartesianGrid stroke={ink.grid} vertical={false} />
+              <XAxis dataKey="day" stroke={ink.axis} fontSize={11} />
+              <YAxis allowDecimals={false} stroke={ink.axis} fontSize={11} />
+              <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <Legend />
+              {members.map((m) => (
+                <Area key={m.steamid} type="stepAfter" dataKey={m.name} stroke={m.color}
+                  fill={m.color} fillOpacity={0.08} strokeWidth={2} connectNulls />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Library by difficulty</div>

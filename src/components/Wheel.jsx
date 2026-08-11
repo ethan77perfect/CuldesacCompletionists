@@ -154,10 +154,11 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   }
 
   const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
-  // one active contract per person: spinner is bound until they beat it or Monday clears it
+  // one active contract per person: spinner is bound until they beat it or Monday clears it.
+  // Same rule for the club: one live bounty at a time — beat it or Monday clears it.
   const boundBy = mode === "personal"
     ? stats.contractView.find((c) => c.steamid === spinner && c.status === "active")
-    : null;
+    : activeBounty ?? null;
   const fmtExpiry = (t) => new Date(t * 1000).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 
   // drum readout: current slice ± 2 neighbors, curved away in perspective
@@ -233,7 +234,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               <text x={C} y={C + 2} textAnchor="middle" dominantBaseline="middle" fontSize="20" fontWeight="700"
                 fill={spinning ? "var(--faint)" : "var(--accent)"}
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.14em", userSelect: "none" }}>
-                {spinning ? "· · ·" : boundBy ? "BOUND" : "SPIN"}
+                {spinning ? "· · ·" : boundBy ? (mode === "public" ? "POSTED" : "BOUND") : "SPIN"}
               </text>
             </g>
           </svg>
@@ -271,18 +272,16 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
 
           {boundBy && !spinning && (
             <div style={{ background: "var(--accent-bg)", border: "1px solid var(--accent-border)", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
-              <div style={{ ...S.label, marginBottom: 6 }}>Under contract</div>
+              <div style={{ ...S.label, marginBottom: 6 }}>{mode === "public" ? "Bounty is live" : "Under contract"}</div>
               <div style={{ fontSize: 14 }}>
-                <b style={{ color: "var(--accent)" }}>{boundBy.gameName}</b> at {boundBy.multiplier}× —
-                beat it to spin again, or the contract expires <b>{fmtExpiry(boundBy.expiry)}</b>.
+                <b style={{ color: "var(--accent)" }}>{boundBy.gameName}</b> at {boundBy.multiplier}×
+                {mode === "public" ? " for everyone" : ""} —
+                {mode === "public" ? " someone beats it or it" : " beat it to spin again, or the contract"} expires <b>{fmtExpiry(boundBy.expiry)}</b>.
               </div>
             </div>
           )}
           {!result && !spinning && !boundBy && drumRows.length > 0 && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>
-              Hit the hub to spin.
-              {activeBounty && mode === "public" && <> Active bounty: <b style={{ color: "var(--accent)" }}>{activeBounty.gameName}</b> at 2×.</>}
-            </p>
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>Hit the hub to spin.</p>
           )}
           {result && !boundBy && (
             <div>
