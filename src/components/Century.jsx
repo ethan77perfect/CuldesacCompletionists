@@ -82,23 +82,11 @@ function Cover({ appid, name, status, pct, owned, override }) {
   );
 }
 
-function Stars({ value, onSet, disabled }) {
-  return (
-    <span style={{ whiteSpace: "nowrap", fontSize: 12, letterSpacing: 1, cursor: disabled ? "default" : "pointer" }}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <span key={i} title={`Fun: ${i}/5${value === i ? " (click to clear)" : ""}`}
-          onClick={() => !disabled && onSet(value === i ? 0 : i)}
-          style={{ color: i <= value ? "var(--accent)" : "var(--faint)" }}>
-          {i <= value ? "★" : "☆"}
-        </span>
-      ))}
-    </span>
-  );
-}
 
 const SORTS = {
   added: "Added order", az: "A–Z", diff: "Difficulty", playtime: "Playtime",
-  points: "Points earned", lastplayed: "Last played", fun: "★ Fun",
+  points: "Points earned", achpct: "% achievements", ptspct: "% points",
+  lastplayed: "Last played",
 };
 
 export default function Century({ stats, meta, mutate, busy, nav }) {
@@ -120,6 +108,28 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
     }
     return m;
   }, [stats]);
+
+  // % of a game's per-achievement points earned. Denominator is the
+  // per-achievement pool ONLY — the 100% completion bonus is excluded,
+  // so this measures ground covered, not the summit. Numerator uses
+  // base achievement values (no first-blood/pioneer/contract bonuses).
+  const ptsPct = useMemo(() => {
+    const totals = new Map();
+    for (const g of stats.games) totals.set(g.appid, [...g.table.per.values()].reduce((s, v) => s + v, 0));
+    const earned = new Map();
+    for (const e of stats.events) {
+      if (e.kind !== "unlock") continue;
+      const g = trackedById[e.appid];
+      if (!g) continue;
+      const k = `${e.sid}|${e.appid}`;
+      earned.set(k, (earned.get(k) ?? 0) + (g.table.per.get(e.achId) ?? 0));
+    }
+    return (sid, appid) => {
+      const t = totals.get(appid);
+      if (!t) return null;
+      return Math.min(100, Math.round(100 * (earned.get(`${sid}|${appid}`) ?? 0) / t));
+    };
+  }, [stats, trackedById]);
 
   const playtime = stats.profilesPlaytime?.[viewing] ?? {};
   const lastPlayed = stats.profilesLastPlayed?.[viewing] ?? {};
@@ -173,14 +183,15 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
         case "diff": return -(trackedById[appid]?.diff ?? -1);
         case "playtime": return -(playtime[appid] ?? -1);
         case "points": return -(ptsByKey.get(`${viewing}|${appid}`) ?? -1);
+        case "achpct": return -(trackedById[appid] ? statusOf(viewing, appid).pct : -1);
+        case "ptspct": return -(ptsPct(viewing, appid) ?? -1);
         case "lastplayed": return -(lastPlayed[appid] ?? -1);
-        case "fun": return -(c.fun ?? 0);
         default: return 0;   // added order (db order)
       }
     };
     if (sort === "added") return base;
     return [...base].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
-  }, [viewing, sort, meta.century, trackedById, playtime, lastPlayed, ptsByKey]);
+  }, [viewing, sort, meta.century, trackedById, playtime, lastPlayed, ptsByKey, ptsPct]);
 
   async function search(e) {
     e?.preventDefault();
@@ -304,6 +315,7 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                   sort === "diff" && tracked ? `${trackedById[appid].diff}/10` :
                   sort === "points" ? `${Math.round(ptsByKey.get(`${viewing}|${appid}`) ?? 0)} pts` :
                   sort === "lastplayed" && lastPlayed[appid] ? new Date(lastPlayed[appid] * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" }) :
+                  sort === "ptspct" && tracked ? `${ptsPct(viewing, appid) ?? 0}% pts` :
                   null;
                 return (
                   <div key={c.appid} style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 13 }}>
@@ -316,9 +328,6 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                       {c.name}{owned === false && " 🕸"}
                     </span>
                     {sortNote && <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>{sortNote}</span>}
-                    <Stars value={c.fun ?? 0} disabled={busy}
-                      onSet={(v) => mutate("setCenturyFun", { steamid: viewing, appid, fun: v },
-                        () => v ? `${c.name}: ${"★".repeat(v)}` : `${c.name}: rating cleared`)} />
                     {tracked ? (
                       <span style={{ width: 74, display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
                         <span style={{ flex: 1 }}><PctBar pct={st.pct} /></span>
