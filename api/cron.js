@@ -103,8 +103,16 @@ export default async function handler(req, res) {
     }
   }
   const prevFetchedAt = prevCache.data?.fetched_at ? Date.parse(prevCache.data.fetched_at) / 1000 : Date.now() / 1000 - 86400;
-  await db.from("snapshot_cache").upsert({ id: 1, payload: data, fetched_at: new Date().toISOString() });
-  if (rows.length) await db.from("snapshots").upsert(rows);
+  // Writes must fail LOUDLY — a silent write failure here shows up later
+  // as "slow loads + Discord re-announcing everything" with no error.
+  const cacheWrite = await db.from("snapshot_cache").upsert({ id: 1, payload: data, fetched_at: new Date().toISOString() });
+  if (cacheWrite.error)
+    return res.status(500).json({ error: `snapshot_cache write failed: ${cacheWrite.error.message} — did you run supabase/migration-v4.sql?` });
+  if (rows.length) {
+    const rowWrite = await db.from("snapshots").upsert(rows);
+    if (rowWrite.error)
+      return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
+  }
 
   // ---- 4. the diff ----
   const { data: prevDays } = await db.from("snapshots").select("day").lt("day", today)
@@ -119,8 +127,12 @@ export default async function handler(req, res) {
   const rarePct = settingsRow.data?.data?.notifyRarePct ?? 1.0;
 
   const embeds = [];
+  // FIRST-RUN GUARD: with no previous day to compare against, every
+  // completion in club history would look "new". Establish the baseline
+  // silently instead of flooding Discord with old news.
+  const firstRun = !prevDay;
   // completions: complete today, wasn't before
-  for (const r of rows) {
+  for (const r of firstRun ? [] : rows) {
     const prev = prevMap.get(`${r.steamid}|${r.appid}`);
     if (r.complete && !(prev?.complete)) {
       embeds.push({
@@ -178,6 +190,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
+    prevDay: prevDay ?? null, firstRun,
     notifications: embeds.length, discord: Boolean(webhook),
   });
 }
