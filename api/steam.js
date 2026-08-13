@@ -33,11 +33,16 @@ const ROUTES = {
     `${BASE}/ISteamUserStats/GetSchemaForGame/v2/?key=${key}&appid=${q.appid}`,
   summary: (q, key) =>
     `${BASE}/ISteamUser/GetPlayerSummaries/v2/?key=${key}&steamids=${q.steamids}`,
+  // Steam STORE search (different host, no key needed) — powers the
+  // Century page's add-a-game box. Proxied for CORS + caching.
+  search: (q) =>
+    `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(q.term ?? "")}&cc=us&l=en`,
 };
 
 // Cache lifetimes (seconds) for Vercel's CDN. Global rarity moves slowly;
 // player achievements should stay fresh so new unlocks show up quickly.
 const CACHE = {
+  search: 3600,
   resolve: 86400,
   owned: 900,
   achievements: 300,

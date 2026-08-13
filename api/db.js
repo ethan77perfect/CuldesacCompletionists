@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -74,6 +74,7 @@ export default async function handler(req, res) {
         supabase.from("challenges").select("*").order("created_at"),
         supabase.from("claims").select("*").order("claimed_at"),
         supabase.from("pioneers").select("*"),
+        supabase.from("century").select("*").order("added_at"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -92,6 +93,7 @@ export default async function handler(req, res) {
         challenges: challenges.data ?? [],
         claims: claims.data ?? [],
         pioneers: pioneers.error ? [] : (pioneers.data ?? []),   // tolerate pre-v5 DBs
+        century: century.error ? [] : (century.data ?? []),       // tolerate pre-v6 DBs
       });
     }
 
@@ -196,6 +198,24 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, name: g.name });
       }
       // ---- wheel contracts ----
+      case "addCentury": {
+        // hard cap: a century is exactly 100 dreams, no more
+        const { count, error: cErr } = await supabase.from("century")
+          .select("*", { count: "exact", head: true }).eq("steamid", body.steamid);
+        if (cErr) return fail(500, cErr.message + " — run migration-v6.sql?");
+        if ((count ?? 0) >= 100) return fail(400, "That century is full (100/100) — remove something first.");
+        const { error } = await supabase.from("century").upsert({
+          steamid: body.steamid, appid: Number(body.appid), name: String(body.name ?? `App ${body.appid}`).slice(0, 120),
+        });
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "removeCentury": {
+        const { error } = await supabase.from("century").delete()
+          .eq("steamid", body.steamid).eq("appid", Number(body.appid));
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
       case "createContract": {
         const { error } = await supabase.from("contracts").insert({
           steamid: body.steamid ?? null,                 // null = public bounty

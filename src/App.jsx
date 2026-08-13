@@ -34,6 +34,7 @@ import Compare from "./components/Compare.jsx";
 import StatsPage from "./components/StatsPage.jsx";
 import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
+import Century from "./components/Century.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
@@ -60,7 +61,7 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["hunt", "Hunt"], ["wheel", "Wheel"], ["challenges", "Challenges"],
+  ["hunt", "Hunt"], ["wheel", "Wheel"], ["century", "Century"], ["challenges", "Challenges"],
   ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
@@ -221,6 +222,7 @@ export default function App() {
         .card-lift { transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
         .card-lift:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
         [data-mode="light"] .card-lift:hover, [data-mode="game"] .card-lift:hover { box-shadow: 0 6px 16px rgba(30,30,25,.18); }
+        @media (max-width: 860px) { .century-cols { grid-template-columns: 1fr !important; } }
         @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
         @keyframes pointer-kick { 0% { transform: translateX(-50%) rotate(0); } 35% { transform: translateX(-50%) rotate(10deg); } 100% { transform: translateX(-50%) rotate(0); } }
         .wheel-pointer { transform: translateX(-50%); animation: pointer-kick .12s ease-out; }
@@ -309,6 +311,7 @@ export default function App() {
         {stats && !empty && page === "stats" && <StatsPage stats={stats} nav={nav} members={meta.members} history={history} />}
         {meta && page === "backlog" && <Backlog meta={meta} mutate={mutate} busy={busy} />}
         {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
+        {stats && !empty && page === "century" && <Century stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
 

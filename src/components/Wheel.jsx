@@ -33,6 +33,8 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   const [result, setResult] = useState(null);
   const [spinning, setSpinning] = useState(false);
   const [current, setCurrent] = useState(0);   // slice index under the pointer
+  const [ownedOnly, setOwnedOnly] = useState(true);      // skip games the spinner doesn't own
+  const [centuryOnly, setCenturyOnly] = useState(false); // only games on the spinner's Century list
   const [tick, setTick] = useState(0);         // increments per boundary → pointer kick
   const gRef = useRef(null);                   // rotating <g>; mutated per frame (no re-render)
   const rotRef = useRef(0);
@@ -45,15 +47,20 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         color: SLICE_COLORS[i % SLICE_COLORS.length],
       }));
     }
+    const playtime = stats.profilesPlaytime?.[spinner] ?? {};
+    const ownershipKnown = Object.keys(playtime).length > 0;   // empty = private profile / no data
+    const centurySet = new Set((meta.century ?? []).filter((c) => c.steamid === spinner).map((c) => Number(c.appid)));
     return stats.games
       .filter((g) => !g.players[spinner]?.complete)
+      .filter((g) => !(ownedOnly && ownershipKnown) || playtime[g.appid] !== undefined)
+      .filter((g) => !centuryOnly || centurySet.has(g.appid))
       .map((g, i) => {
         const rec = stats.recs.find((r) => r.sid === spinner && r.appid === g.appid);
         return { appid: g.appid, name: g.name, diff: g.diff,
           weight: rec ? 100 / rec.effort : 0.5,
           color: SLICE_COLORS[i % SLICE_COLORS.length] };
       });
-  }, [mode, spinner, stats]);
+  }, [mode, spinner, stats, ownedOnly, centuryOnly, meta.century]);
 
   const totalW = slices.reduce((s, x) => s + x.weight, 0);
 
@@ -174,14 +181,30 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           <button key={k} style={{ ...S.btnGhost, ...(mode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
             onClick={() => { setMode(k); setResult(null); }}>{l}</button>
         ))}
-        {mode === "personal" && (
-          <span style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "var(--muted)" }}>
-            Spinning as
-            <select value={spinner} onChange={(e) => { setSpinner(e.target.value); setResult(null); }} style={{ ...S.input, width: "auto" }}>
-              {meta.members.map((m) => <option key={m.steamid} value={m.steamid}>{m.name}</option>)}
-            </select>
-          </span>
-        )}
+        {mode === "personal" && (() => {
+          const ownershipKnown = Object.keys(stats.profilesPlaytime?.[spinner] ?? {}).length > 0;
+          const hasCentury = (meta.century ?? []).some((c) => c.steamid === spinner);
+          return (
+            <span style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 13, color: "var(--muted)", flexWrap: "wrap" }}>
+              Spinning as
+              <select value={spinner} onChange={(e) => { setSpinner(e.target.value); setResult(null); }} style={{ ...S.input, width: "auto" }}>
+                {meta.members.map((m) => <option key={m.steamid} value={m.steamid}>{m.name}</option>)}
+              </select>
+              <label title={ownershipKnown ? "Skip games this person doesn't own" : "Ownership unknown — this profile's game list isn't public"}
+                style={{ display: "flex", gap: 5, alignItems: "center", cursor: ownershipKnown ? "pointer" : "not-allowed", opacity: ownershipKnown ? 1 : 0.5 }}>
+                <input type="checkbox" checked={ownedOnly && ownershipKnown} disabled={!ownershipKnown}
+                  onChange={(e) => { setOwnedOnly(e.target.checked); setResult(null); }} />
+                Owned only
+              </label>
+              <label title={hasCentury ? "Only games on this person's Century list" : "No Century list yet — build one on the Century page"}
+                style={{ display: "flex", gap: 5, alignItems: "center", cursor: hasCentury ? "pointer" : "not-allowed", opacity: hasCentury ? 1 : 0.5 }}>
+                <input type="checkbox" checked={centuryOnly && hasCentury} disabled={!hasCentury}
+                  onChange={(e) => { setCenturyOnly(e.target.checked); setResult(null); }} />
+                My hundred only
+              </label>
+            </span>
+          );
+        })()}
         <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: "auto" }}>
           {mode === "personal" ? "Fatter slices = closer to 100%" : `${slices.length} games, equal odds`}
         </span>
