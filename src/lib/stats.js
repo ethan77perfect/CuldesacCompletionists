@@ -38,7 +38,8 @@ export const RARITY_TIERS = [
   { min: 0.1, name: "Legendary", color: "#E8B84B" },
   { min: -1, name: "Mythic", color: "#E05B5B" },
 ];
-export const tierOf = (pct) => RARITY_TIERS.find((t) => pct >= t.min);
+export const UNRATED_TIER = { name: "Unrated", color: "#8FA3BF" };
+export const tierOf = (pct) => (pct == null || pct <= 0 ? UNRATED_TIER : RARITY_TIERS.find((t) => pct >= t.min));
 
 export function buildClubStats(clubData, meta, settings) {
   const cfg = settings;
@@ -46,6 +47,8 @@ export function buildClubStats(clubData, meta, settings) {
   const byId = Object.fromEntries(members.map((m) => [m.steamid, m]));
   const dbGames = Object.fromEntries(meta.games.map((g) => [g.appid, g]));
   const fbPct = cfg.firstBloodPct ?? 0.1;
+  const pioneerBonus = cfg.pioneerBonus ?? 0.25;
+  const pioneerSet = new Set((meta.pioneers ?? []).map((p) => `${p.steamid}|${p.appid}|${p.achid}`));
   const profiles = clubData.profiles ?? {};
 
   // ---- score every game ----
@@ -53,7 +56,8 @@ export function buildClubStats(clubData, meta, settings) {
     const db = dbGames[raw.appid] ?? {};
     const adjust = db.adjust ?? 0;
     const table = pointTable(raw.ach, cfg, adjust);
-    const achById = Object.fromEntries(raw.ach.map((a) => [a.id, a]));
+    // keep RAW pcts for display (0 renders as ⏳ Unrated) with a flag
+    const achById = Object.fromEntries(raw.ach.map((a) => [a.id, { ...a, provisional: a.pct <= 0 }]));
     const players = {};
     for (const m of members) {
       const unlocks = raw.players[m.steamid];
@@ -100,10 +104,11 @@ export function buildClubStats(clubData, meta, settings) {
         const a = g.achById[u.id];
         const base = g.table.per.get(u.id) ?? 0;
         const fb = firstOf[u.id]?.sid === sid ? base * fbPct : 0;
+        const pio = pioneerSet.has(`${sid}|${g.appid}|${u.id}`) ? base * pioneerBonus : 0;
         events.push({
           sid, appid: g.appid, gameName: g.name, t: u.t, kind: "unlock",
-          pts: base + fb, firstBlood: fb > 0,
-          achId: u.id, achName: a?.name ?? u.id, pct: a?.pct ?? 0,
+          pts: base + fb + pio, firstBlood: fb > 0, pioneer: pio > 0,
+          achId: u.id, achName: a?.name ?? u.id, pct: a?.pct ?? 0, provisional: a?.provisional ?? false,
         });
       }
       if (r.complete && r.lastUnlock) {
@@ -185,7 +190,8 @@ export function buildClubStats(clubData, meta, settings) {
     }
     if (e.t >= seasonCut) p.seasonPoints += e.pts;
     p.weeks.add(isoWeek(e.t));
-    if (e.kind === "unlock" && (!p.rarestUnlock || e.pct < p.rarestUnlock.pct)) p.rarestUnlock = e;
+    if (e.kind === "unlock" && e.pioneer) p.pioneerCount = (p.pioneerCount ?? 0) + 1;
+    if (e.kind === "unlock" && !e.provisional && e.pct > 0 && (!p.rarestUnlock || e.pct < p.rarestUnlock.pct)) p.rarestUnlock = e;
   }
   for (const g of games) {
     for (const [sid, r] of Object.entries(g.players)) {
@@ -254,7 +260,7 @@ export function buildClubStats(clubData, meta, settings) {
 
   // ---- feed, hall of fame, records, graveyard ----
   const feed = [...events].reverse().slice(0, 40);
-  const hallOfFame = events.filter((e) => e.kind === "unlock")
+  const hallOfFame = events.filter((e) => e.kind === "unlock" && !e.provisional && e.pct > 0)
     .sort((a, b) => a.pct - b.pct).slice(0, 15);
   const now = Date.now() / 1000;
   const graveyard = [];
@@ -322,6 +328,8 @@ export function buildClubStats(clubData, meta, settings) {
     ["Iron Streak", (p) => p.streak.best >= 8],
     ["Speedrunner", (p) => p.spans.some((s) => s.days <= 7)],
     ["Marathoner", (p) => p.spans.some((s) => s.days >= 365)],
+    ["Pioneer", (p) => (p.pioneerCount ?? 0) >= 1],
+    ["Trailblazer", (p) => (p.pioneerCount ?? 0) >= 10],
   ];
   for (const p of Object.values(perPlayer))
     p.badges = badgeDefs.filter(([, fn]) => fn(p)).map(([name]) => name);
@@ -453,7 +461,7 @@ export function suggestHuntAchievements(games, appids, perGame = 20) {
   for (const appid of appids) {
     const g = games.find((x) => Number(x.appid) === Number(appid));
     if (!g) continue;
-    const sorted = [...g.ach].sort((a, b) => a.pct - b.pct); // rarest first
+    const sorted = [...g.ach].filter((a) => a.pct > 0).sort((a, b) => a.pct - b.pct); // rarest first, never unrated
     const n = Math.min(perGame, sorted.length);
     const nRare = Math.round(n * 0.6), nMid = Math.round(n * 0.25);
     const half = sorted.slice(0, Math.ceil(sorted.length / 2));

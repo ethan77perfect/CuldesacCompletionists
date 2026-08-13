@@ -114,27 +114,67 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
   }
 
-  // ---- 4. the diff ----
-  const { data: prevDays } = await db.from("snapshots").select("day").lt("day", today)
-    .order("day", { ascending: false }).limit(1);
-  const prevDay = prevDays?.[0]?.day;
-  const prevRows = prevDay
-    ? (await db.from("snapshots").select("*").eq("day", prevDay)).data ?? []
-    : [];
-  const prevMap = new Map(prevRows.map((r) => [`${r.steamid}|${r.appid}`, r]));
+  // ---- 3.5 pioneer scan: record unlocks made while the WORLD was ≤ pioneerPct ----
+  // Detected at ingest: if an unlock is new since last run and the
+  // achievement's current global % is tiny, that player was verifiably
+  // early — recorded permanently, immune to the % rising later.
+  // First-ever scan backfills from all current sub-threshold unlocks.
+  const pioneerPct = settingsRow.data?.data?.pioneerPct ?? 1.0;
+  const existingPio = await db.from("pioneers").select("steamid, appid, achid");
+  const newPioneerKeys = new Set();
+  if (!existingPio.error) {
+    const have = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
+    const firstScan = (existingPio.data ?? []).length === 0;
+    const inserts = [];
+    for (const g of data.games) {
+      const achById = Object.fromEntries(g.ach.map((a) => [a.id, a]));
+      for (const [sid, unlocks] of Object.entries(g.players)) {
+        for (const u of unlocks) {
+          const a = achById[u.id];
+          if (!a || a.pct <= 0 || a.pct > pioneerPct) continue;   // 0.0% = unknown, never counts
+          const keyStr = `${sid}|${g.appid}|${u.id}`;
+          if (have.has(keyStr)) continue;
+          if (firstScan || u.t >= prevFetchedAt) {
+            inserts.push({ steamid: sid, appid: g.appid, achid: u.id,
+              unlocked_at: u.t ? new Date(u.t * 1000).toISOString() : null, pct_at_unlock: a.pct });
+            if (!firstScan) newPioneerKeys.add(keyStr);
+          }
+        }
+      }
+    }
+    if (inserts.length) {
+      const w = await db.from("pioneers").upsert(inserts);
+      if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });
+    }
+  }
+
+  // ---- 4. the diff (against the previous RUN, not the previous day) ----
+  // The last run's full payload lives in snapshot_cache, so back-to-back
+  // runs diff cleanly and skipped nights don't break anything. The
+  // per-day snapshot rows are history-chart data, not diff data.
+  const prevPayload = prevCache.data?.payload ?? null;
+  const prevComplete = new Map();      // "sid|appid" -> was complete last run
+  const prevTracked = new Set();       // appids that existed last run
+  if (prevPayload?.games) {
+    for (const g of prevPayload.games) {
+      prevTracked.add(Number(g.appid));
+      for (const [sid, unlocks] of Object.entries(g.players ?? {})) {
+        prevComplete.set(`${sid}|${g.appid}`, unlocks.length === g.ach.length && g.ach.length > 0);
+      }
+    }
+  }
   const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
   const gameName = Object.fromEntries((gamesList.data ?? []).map((g) => [g.appid, g.name]));
   const rarePct = settingsRow.data?.data?.notifyRarePct ?? 1.0;
 
   const embeds = [];
-  // FIRST-RUN GUARD: with no previous day to compare against, every
-  // completion in club history would look "new". Establish the baseline
-  // silently instead of flooding Discord with old news.
-  const firstRun = !prevDay;
-  // completions: complete today, wasn't before
+  // FIRST-RUN GUARD: no previous payload → establish the baseline
+  // silently instead of announcing the club's entire history.
+  const firstRun = !prevPayload;
+  // completions: complete now, wasn't complete last run, and the game
+  // was TRACKED last run (adding an already-beaten game isn't news)
   for (const r of firstRun ? [] : rows) {
-    const prev = prevMap.get(`${r.steamid}|${r.appid}`);
-    if (r.complete && !(prev?.complete)) {
+    if (r.complete && prevTracked.has(Number(r.appid)) && !prevComplete.get(`${r.steamid}|${r.appid}`)) {
       embeds.push({
         title: `💯 ${nameOf[r.steamid]} perfected ${gameName[r.appid] ?? r.appid}!`,
         description: `${r.total} achievements, all of them. The shelf grows.`,
@@ -148,11 +188,13 @@ export default async function handler(req, res) {
     for (const [sid, unlocks] of Object.entries(g.players)) {
       for (const u of unlocks) {
         const a = achById[u.id];
-        if (u.t >= prevFetchedAt && a && a.pct <= rarePct) {
+        if (u.t >= prevFetchedAt && a && a.pct > 0 && a.pct <= rarePct) {
+          const isPio = newPioneerKeys.has(`${sid}|${g.appid}|${u.id}`);
           embeds.push({
-            title: `💎 ${nameOf[sid]} unlocked "${a.name}"`,
-            description: `${g.name} — only **${a.pct.toFixed(2)}%** of players have this.`,
-            color: 0xB48CE0,
+            title: `${isPio ? "🚩" : "💎"} ${nameOf[sid]} unlocked "${a.name}"`,
+            description: `${g.name} — only **${a.pct.toFixed(2)}%** of players have this.` +
+              (isPio ? "\nPIONEER recorded — early forever, no matter how common it becomes." : ""),
+            color: isPio ? 0xE05B5B : 0xB48CE0,
           });
         }
       }
@@ -190,7 +232,7 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
-    prevDay: prevDay ?? null, firstRun,
+    prevRunAt: prevCache.data?.fetched_at ?? null, firstRun,
     notifications: embeds.length, discord: Boolean(webhook),
   });
 }

@@ -53,7 +53,8 @@ export default function Home({ stats, nav }) {
                       <a style={S.link} onClick={() => nav(`/game/${e.appid}`)}>{e.gameName}</a>{" "}
                       <TierChip pct={e.pct} />{" "}
                       <span style={{ color: "var(--muted)" }}>+{Math.round(e.pts)}</span>
-                      {e.firstBlood && <span title="First in the club"> 🩸</span>}</>
+                      {e.firstBlood && <span title="First in the club"> 🩸</span>}
+                      {e.pioneer && <span title="Pioneer — unlocked while ≤1% of the world had it"> 🚩</span>}</>
                   )}
                 </span>
               </div>

@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -73,6 +73,7 @@ export default async function handler(req, res) {
         supabase.from("hunts").select("*").order("month", { ascending: false }),
         supabase.from("challenges").select("*").order("created_at"),
         supabase.from("claims").select("*").order("claimed_at"),
+        supabase.from("pioneers").select("*"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -90,6 +91,7 @@ export default async function handler(req, res) {
         hunts: hunts.data ?? [],
         challenges: challenges.data ?? [],
         claims: claims.data ?? [],
+        pioneers: pioneers.error ? [] : (pioneers.data ?? []),   // tolerate pre-v5 DBs
       });
     }
 

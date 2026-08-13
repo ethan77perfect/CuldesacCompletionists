@@ -15,6 +15,22 @@ export const DEFAULT_SETTINGS = { bonus: 0.4, steepness: 3.5, rarestWeight: 0.85
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const FLOOR = 0.05;   // clamp global % to avoid log blowups
+
+/**
+ * Steam reports EXACTLY 0.0% for achievements whose global stats it
+ * hasn't computed yet (brand-new ones). That is "unknown", not
+ * "rarest thing alive" — so provisional achievements are weighted at
+ * the game's own typical (geometric-mean) rarity and excluded from
+ * the rarest-achievement difficulty driver. They graduate to real
+ * values automatically once Steam's data arrives.
+ */
+export function effectiveAch(ach) {
+  const known = ach.filter((a) => a.pct > 0);
+  const geo = known.length
+    ? Math.exp(known.reduce((s, a) => s + Math.log(Math.max(a.pct, FLOOR)), 0) / known.length)
+    : 20;
+  return ach.map((a) => (a.pct > 0 ? a : { ...a, pct: geo, provisional: true }));
+}
 const ANCHOR = 20;    // rarity % that maps to difficulty 1
 
 /** Difficulty 1–10 from global rarity, plus optional club adjustment. */
@@ -29,7 +45,9 @@ export function difficultyFromRarity(pcts, cfg, adjust = 0) {
 
 /** Point value of each achievement in a game, plus the 100% bonus. */
 export function pointTable(ach, cfg, adjust = 0) {
-  const diff = difficultyFromRarity(ach.map((a) => a.pct), cfg, adjust);
+  ach = effectiveAch(ach);
+  const diff = difficultyFromRarity(ach.filter((a) => !a.provisional).map((a) => a.pct)
+    .concat(ach.every((a) => a.provisional) ? ach.map((a) => a.pct) : []), cfg, adjust);
   const pool = diff * 100;
   const earnable = pool * (1 - cfg.bonus);
   const weights = ach.map((a) => 1 / Math.sqrt(Math.max(a.pct, FLOOR)));

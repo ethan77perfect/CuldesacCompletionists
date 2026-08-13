@@ -74,6 +74,13 @@ export function Slider({ label, value, min, max, step, onChange, fmt }) {
 
 export function TierChip({ pct }) {
   const t = tierOf(pct);
+  if (pct == null || pct <= 0) return (
+    <span title="Steam hasn't computed global stats for this achievement yet"
+      style={{ fontSize: 10, fontWeight: 700, color: "var(--muted)", border: "1px dashed var(--border2)",
+        background: "var(--chip)", borderRadius: 12, padding: "1px 7px", whiteSpace: "nowrap" }}>
+      ⏳ Unrated
+    </span>
+  );
   return (
     <span style={{ fontSize: 10, fontWeight: 700,
       color: `color-mix(in srgb, ${t.color} calc(100% - var(--sem-darken, 0%)), #1A1A1A)`,

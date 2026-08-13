@@ -85,6 +85,7 @@ export default function PlayerPage({ stats, sid, nav }) {
                 <><i>{p.rarestUnlock.achName}</i> ({p.rarestUnlock.gameName}) <TierChip pct={p.rarestUnlock.pct} /></>
               ) : "—"}</div>
               <div>Hardest clear: {p.hardestClear ? `${p.hardestClear.name} (${p.hardestClear.diff}/10)` : "—"}</div>
+              <div>Pioneer unlocks 🚩: {p.pioneerCount ?? 0} <span style={{ color: "var(--faint)" }}>(earned while ≤1% of the world had them)</span></div>
               <div>Avg time to 100%: {p.avgSpanDays != null ? fmtDays(p.avgSpanDays) : "—"}</div>
               <div>Season points ({stats.season}): <b style={{ color: "var(--accent)" }}>{p.seasonPoints.toLocaleString()}</b></div>
             </div>
