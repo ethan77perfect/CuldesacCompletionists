@@ -98,7 +98,18 @@ export default function App() {
 
   const [loadProgress, setLoadProgress] = useState(null);
   const [dataAsOf, setDataAsOf] = useState(null);   // set while showing last night's snapshot
+  const [refreshFailed, setRefreshFailed] = useState(false);   // live refresh died; snapshot is what you get
   const [history, setHistory] = useState([]);       // daily aggregates for the progress chart
+
+  // Refresh CLUB data only (members, games list, contracts, century,
+  // covers, …) — no Steam round trip. This is all most mutations need:
+  // rebuilding stats from existing clubData + fresh meta is instant.
+  async function loadMeta() {
+    const r = await fetch("/api/db");
+    const j = await r.json();
+    if (r.ok) setMeta(j);
+    return j;
+  }
 
   async function loadAll() {
     setError("");
@@ -139,6 +150,7 @@ export default function App() {
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let games = [], profiles = {};
+      try {
       for (let ci = 0; ci < chunks.length; ci++) {
         if (!haveCache) setLoadProgress({ done: ci, total: chunks.length });
         const url = `/api/club?steamids=${sids}&appids=${chunks[ci].join(",")}&profiles=${ci === 0 ? 1 : 0}`;
@@ -160,6 +172,13 @@ export default function App() {
       setClubData({ games, profiles });
       setDataAsOf(null);
       setLoadProgress(null);
+      setRefreshFailed(false);
+      } catch (chunkErr) {
+        if (!haveCache) throw chunkErr;   // nothing on screen → surface the real error
+        // snapshot is on screen: keep it, stop pulsing, say what happened
+        setLoadProgress(null);
+        setRefreshFailed(true);
+      }
     } catch (e) {
       setLoadProgress(null);
       setError(e.message || "Something went wrong loading club data");
@@ -183,7 +202,17 @@ export default function App() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
       setNotice(successMsg(j));
-      await loadAll();
+      // Only game-set changes need the full Steam pipeline (with its
+      // snapshot-repaint-then-live-refresh dance). Everything else —
+      // century picks, covers, contracts, votes, ratings, settings —
+      // changes club metadata only: refresh that and let stats
+      // recompute in place. This is what stops the library from
+      // "vanishing and coming back" on unrelated edits.
+      if (["addGame", "removeGame", "promoteBacklog", "addMember", "removeMember"].includes(op)) {
+        await loadAll();
+      } else {
+        await loadMeta();
+      }
       return j;
     } catch (e) {
       setError(e.message || "That didn't work");
@@ -276,8 +305,11 @@ export default function App() {
         )}
         {dataAsOf && (
           <div className="panel" style={{ ...S.panel, marginBottom: 14, padding: "8px 14px", fontSize: 12, color: "var(--muted)", display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ width: 8, height: 8, borderRadius: 4, background: "var(--accent)", animation: "pulse 1.4s ease-in-out infinite" }} />
-            Showing the latest snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: refreshFailed ? "var(--err-border)" : "var(--accent)",
+              animation: refreshFailed ? "none" : "pulse 1.4s ease-in-out infinite" }} />
+            {refreshFailed
+              ? <>Showing the latest snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — live refresh hit Steam's limits. Data may be up to a day old; reload in a minute to retry.</>
+              : <>Showing the latest snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…</>}
           </div>
         )}
         {loadProgress && (
