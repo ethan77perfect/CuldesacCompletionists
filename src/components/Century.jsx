@@ -32,6 +32,7 @@ function Cover({ appid, name, status, pct, owned, override }) {
     `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/header.jpg`,
   ];
   const dusty = owned === false;   // owned === null → ownership unknown, no dust
+  const overrideFailed = Boolean(override) && stage > 0;   // custom URL didn't load; we fell back
   const img = stage < urls.length ? (
     <img src={urls[stage]} alt={name} loading="lazy" onError={() => setStage(stage + 1)}
       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block",
@@ -47,11 +48,15 @@ function Cover({ appid, name, status, pct, owned, override }) {
   if (status === "perfect") {
     // the gold frame: gradient bevel + soft glow — shiny and completed
     return (
-      <div title={`${name} — 100% ✓`} style={{ padding: 2, borderRadius: 6, background: GOLD,
+      <div title={`${name} — 100% ✓`} style={{ padding: 2, borderRadius: 6, background: GOLD, position: "relative",
         boxShadow: "0 0 10px rgba(240, 200, 80, 0.45), inset 0 0 2px rgba(255,255,255,.6)", aspectRatio: "2 / 3" }}>
         <div style={{ width: "100%", height: "100%", borderRadius: 4, overflow: "hidden", background: "var(--chip)" }}>
           {img}
         </div>
+        {overrideFailed && (
+          <div title="Custom cover URL failed to load (showing Steam art instead). Click 🖼 in The 100 to fix it."
+            style={{ position: "absolute", top: 3, left: 3, fontSize: 10 }}>⚠️</div>
+        )}
       </div>
     );
   }
@@ -68,6 +73,10 @@ function Cover({ appid, name, status, pct, owned, override }) {
       {status === "untracked" && (
         <div title="Not tracked by the club (progress unknown)"
           style={{ position: "absolute", top: 2, right: 2, fontSize: 9, color: "var(--muted)" }}>○</div>
+      )}
+      {overrideFailed && (
+        <div title="Custom cover URL failed to load (showing Steam art instead). Click 🖼 in The 100 to fix it — the URL must open as a bare image in a browser tab."
+          style={{ position: "absolute", top: 2, left: 2, fontSize: 10 }}>⚠️</div>
       )}
     </div>
   );
@@ -141,7 +150,10 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
   function editCover(appid, name) {
     const current = coverOf[appid] ?? "";
     const url = window.prompt(
-      `Custom cover for "${name}" — paste an image URL (steamgriddb.com is great for this).\nLeave empty and press OK to reset to Steam's default art.`,
+      `Custom cover for "${name}" — paste a DIRECT https image URL.\n` +
+      `Test: the URL should show ONLY the image when opened in a new tab.\n` +
+      `On steamgriddb.com: open the grid, right-click the FULL image → Copy image address.\n` +
+      `Leave empty and press OK to reset to Steam's default art.`,
       current);
     if (url === null) return;   // cancelled
     mutate("setCover", { appid, url },
