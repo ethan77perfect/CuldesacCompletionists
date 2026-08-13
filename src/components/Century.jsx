@@ -1,47 +1,66 @@
 // ---------------------------------------------------------------
 // Century.jsx — "The Century Club" ("#/century").
 //
-// Each member curates a personal list of (up to) 100 games they
-// intend to 100% in their lifetime. Yearbook layout: a 10×10 wall
-// of cover art on the left, the numbered roll call on the right.
+// Each member curates up to 100 games they intend to 100% in their
+// lifetime. Yearbook layout: a 10×10 wall of cover art beside
+// "The 100" — the numbered list with progress, sorting, and fun
+// ratings.
 //
-// Progress is measured against games the CLUB tracks: tracked +
-// perfected = gold ✓, tracked + started = progress bar, untracked
-// = a quiet ○ (we can't verify what we don't fetch). The wheel can
-// filter a personal spin to century games only.
+// Cover states:
+//   perfected → ornate gold gradient frame + glow (no overlay —
+//               the frame IS the trophy)
+//   unowned   → dusty: desaturated, dimmed (they dream of it but
+//               don't own it yet); detected via Steam ownership,
+//               skipped when the profile's game list is private
+//   untracked → quiet ○ (club doesn't fetch it; progress unknown)
+//   otherwise → thin progress bar along the bottom edge
 //
-// Covers come straight from Steam's CDN by appid — portrait
-// library art with graceful fallbacks (header art → initials).
+// Sorts: added order, A–Z, difficulty, playtime, points earned,
+// last played, and the club's own ★ fun rating (set inline).
+// The wall reshuffles with the sort — a living yearbook.
 // ---------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { S, PctBar } from "./ui.jsx";
 
-function Cover({ appid, name, status, pct }) {
+const GOLD = "linear-gradient(140deg, #8A6A14, #F7E27E 28%, #B8860B 52%, #FFF3B0 78%, #9C7A1C)";
+
+function Cover({ appid, name, status, pct, owned }) {
   const [stage, setStage] = useState(0);   // 0 portrait → 1 header → 2 placeholder
   const urls = [
     `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/library_600x900.jpg`,
     `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/header.jpg`,
   ];
-  const border = status === "perfect" ? "2px solid var(--accent)"
-    : status === "progress" ? "1px solid var(--border2)" : "1px solid var(--border)";
-  return (
-    <div title={name} style={{ position: "relative", aspectRatio: "2 / 3", borderRadius: 4, overflow: "hidden",
-      border, background: "var(--chip)", opacity: status === "untracked" ? 0.75 : 1 }}>
-      {stage < 2 ? (
-        <img src={urls[stage]} alt={name} loading="lazy" onError={() => setStage(stage + 1)}
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-      ) : (
-        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 10, fontWeight: 700, color: "var(--muted)", padding: 2, textAlign: "center" }}>
-          {name.slice(0, 18)}
+  const dusty = owned === false;   // owned === null → ownership unknown, no dust
+  const img = stage < 2 ? (
+    <img src={urls[stage]} alt={name} loading="lazy" onError={() => setStage(stage + 1)}
+      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block",
+        filter: dusty ? "grayscale(0.95) brightness(0.72) contrast(0.9)" : "none" }} />
+  ) : (
+    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 10, fontWeight: 700, color: "var(--muted)", padding: 2, textAlign: "center",
+      opacity: dusty ? 0.5 : 1 }}>
+      {name.slice(0, 18)}
+    </div>
+  );
+
+  if (status === "perfect") {
+    // the gold frame: gradient bevel + soft glow — shiny and completed
+    return (
+      <div title={`${name} — 100% ✓`} style={{ padding: 2, borderRadius: 6, background: GOLD,
+        boxShadow: "0 0 10px rgba(240, 200, 80, 0.45), inset 0 0 2px rgba(255,255,255,.6)", aspectRatio: "2 / 3" }}>
+        <div style={{ width: "100%", height: "100%", borderRadius: 4, overflow: "hidden", background: "var(--chip)" }}>
+          {img}
         </div>
-      )}
-      {status === "perfect" && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-          background: "color-mix(in srgb, var(--accent) 22%, transparent)", fontSize: 18 }}>✓</div>
-      )}
-      {status === "progress" && (
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 3, background: "var(--border)" }}>
+      </div>
+    );
+  }
+  return (
+    <div title={name + (dusty ? " — not owned yet" : "")}
+      style={{ position: "relative", aspectRatio: "2 / 3", borderRadius: 4, overflow: "hidden",
+        border: "1px solid var(--border)", background: "var(--chip)" }}>
+      {img}
+      {status === "progress" && pct > 0 && (
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 3, background: "color-mix(in srgb, var(--bg) 60%, transparent)" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)" }} />
         </div>
       )}
@@ -53,8 +72,28 @@ function Cover({ appid, name, status, pct }) {
   );
 }
 
+function Stars({ value, onSet, disabled }) {
+  return (
+    <span style={{ whiteSpace: "nowrap", fontSize: 12, letterSpacing: 1, cursor: disabled ? "default" : "pointer" }}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <span key={i} title={`Fun: ${i}/5${value === i ? " (click to clear)" : ""}`}
+          onClick={() => !disabled && onSet(value === i ? 0 : i)}
+          style={{ color: i <= value ? "var(--accent)" : "var(--faint)" }}>
+          {i <= value ? "★" : "☆"}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const SORTS = {
+  added: "Added order", az: "A–Z", diff: "Difficulty", playtime: "Playtime",
+  points: "Points earned", lastplayed: "Last played", fun: "★ Fun",
+};
+
 export default function Century({ stats, meta, mutate, busy, nav }) {
   const [viewing, setViewing] = useState(meta.members[0]?.steamid ?? "");
+  const [sort, setSort] = useState("added");
   const [term, setTerm] = useState("");
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -62,14 +101,27 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
   const trackedById = useMemo(() =>
     Object.fromEntries(stats.games.map((g) => [g.appid, g])), [stats]);
 
+  // points this member has earned per game (unlocks + completion bonus, multipliers included)
+  const ptsByKey = useMemo(() => {
+    const m = new Map();
+    for (const e of stats.events) {
+      const k = `${e.sid}|${e.appid}`;
+      m.set(k, (m.get(k) ?? 0) + e.pts);
+    }
+    return m;
+  }, [stats]);
+
+  const playtime = stats.profilesPlaytime?.[viewing] ?? {};
+  const lastPlayed = stats.profilesLastPlayed?.[viewing] ?? {};
+  const ownershipKnown = Object.keys(playtime).length > 0;
+
   const listOf = (sid) => (meta.century ?? []).filter((c) => c.steamid === sid);
   const statusOf = (sid, appid) => {
     const g = trackedById[appid];
     if (!g) return { status: "untracked", pct: 0 };
     const p = g.players[sid];
     if (p?.complete) return { status: "perfect", pct: 100 };
-    if (p?.unlocked > 0) return { status: "progress", pct: Math.round((p.unlocked / g.ach.length) * 100) };
-    return { status: "progress", pct: 0 };
+    return { status: "progress", pct: p?.pct ?? 0 };
   };
   const countsOf = (sid) => {
     const list = listOf(sid);
@@ -82,9 +134,27 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
     return { chosen: list.length, perfect, untracked };
   };
 
-  const list = listOf(viewing);
   const mine = countsOf(viewing);
-  const inList = new Set(list.map((c) => Number(c.appid)));
+  const inList = new Set(listOf(viewing).map((c) => Number(c.appid)));
+
+  // sorted view — drives BOTH the wall and The 100
+  const list = useMemo(() => {
+    const base = listOf(viewing);
+    const key = (c) => {
+      const appid = Number(c.appid);
+      switch (sort) {
+        case "az": return c.name.toLowerCase();
+        case "diff": return -(trackedById[appid]?.diff ?? -1);
+        case "playtime": return -(playtime[appid] ?? -1);
+        case "points": return -(ptsByKey.get(`${viewing}|${appid}`) ?? -1);
+        case "lastplayed": return -(lastPlayed[appid] ?? -1);
+        case "fun": return -(c.fun ?? 0);
+        default: return 0;   // added order (db order)
+      }
+    };
+    if (sort === "added") return base;
+    return [...base].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  }, [viewing, sort, meta.century, trackedById, playtime, lastPlayed, ptsByKey]);
 
   async function search(e) {
     e?.preventDefault();
@@ -98,7 +168,6 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
     setSearching(false);
   }
 
-  // common ground: games on 2+ lists
   const shared = useMemo(() => {
     const map = new Map();
     for (const c of meta.century ?? []) {
@@ -110,9 +179,10 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
       .sort((a, b) => b.sids.length - a.sids.length).slice(0, 20);
   }, [meta.century]);
 
+  const fmtMin = (min) => min >= 60 ? `${Math.round(min / 60)}h` : `${min}m`;
+
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      {/* member strip with everyone's score toward the dream */}
       <div className="panel" style={{ ...S.panel, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <span style={S.label}>The Century Club</span>
         {meta.members.map((m) => {
@@ -131,9 +201,9 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
         </span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 3fr) minmax(240px, 2fr)", gap: 14, alignItems: "start" }}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 3fr) minmax(250px, 2fr)", gap: 14, alignItems: "start" }}
         className="century-cols">
-        {/* the yearbook wall */}
+        {/* the yearbook wall — follows the active sort */}
         <div className="panel" style={S.panel}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <div style={S.label}>{stats.byId[viewing]?.name}'s hundred</div>
@@ -147,14 +217,15 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
               const c = list[i];
               if (!c) return <div key={"e" + i} style={{ aspectRatio: "2 / 3", borderRadius: 4,
                 border: "1px dashed var(--border)", opacity: 0.4 }} />;
-              const st = statusOf(viewing, Number(c.appid));
-              return <Cover key={c.appid} appid={c.appid} name={c.name} status={st.status} pct={st.pct} />;
+              const appid = Number(c.appid);
+              const st = statusOf(viewing, appid);
+              const owned = ownershipKnown ? playtime[appid] !== undefined : null;
+              return <Cover key={c.appid} appid={c.appid} name={c.name} status={st.status} pct={st.pct} owned={owned} />;
             })}
           </div>
         </div>
 
         <div style={{ display: "grid", gap: 14 }}>
-          {/* add a game */}
           <div className="panel" style={S.panel}>
             <div style={{ ...S.label, marginBottom: 10 }}>Add to the hundred</div>
             <form onSubmit={search} style={{ display: "flex", gap: 6 }}>
@@ -185,27 +256,54 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
             </p>
           </div>
 
-          {/* roll call */}
-          <div className="panel" style={{ ...S.panel, maxHeight: 420, overflowY: "auto" }}>
-            <div style={{ ...S.label, marginBottom: 10 }}>Roll call</div>
+          {/* The 100 */}
+          <div className="panel" style={{ ...S.panel, maxHeight: 480, overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <div style={S.label}>The 100</div>
+              <select value={sort} onChange={(e) => setSort(e.target.value)}
+                style={{ ...S.input, width: "auto", marginLeft: "auto", fontSize: 12, padding: "3px 8px" }}>
+                {Object.entries(SORTS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
             {list.length === 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>Empty page. Go dream a little.</p>}
-            <div style={{ display: "grid", gap: 3 }}>
+            <div style={{ display: "grid", gap: 5 }}>
               {list.map((c, i) => {
-                const st = statusOf(viewing, Number(c.appid));
+                const appid = Number(c.appid);
+                const st = statusOf(viewing, appid);
                 const tracked = st.status !== "untracked";
+                const owned = ownershipKnown ? playtime[appid] !== undefined : null;
+                const sortNote =
+                  sort === "playtime" && playtime[appid] !== undefined ? fmtMin(playtime[appid]) :
+                  sort === "diff" && tracked ? `${trackedById[appid].diff}/10` :
+                  sort === "points" ? `${Math.round(ptsByKey.get(`${viewing}|${appid}`) ?? 0)} pts` :
+                  sort === "lastplayed" && lastPlayed[appid] ? new Date(lastPlayed[appid] * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" }) :
+                  null;
                 return (
-                  <div key={c.appid} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                  <div key={c.appid} style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 13 }}>
                     <span style={{ width: 22, color: "var(--faint)", fontSize: 11, textAlign: "right" }}>{i + 1}.</span>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      cursor: tracked ? "pointer" : "default", color: st.status === "perfect" ? "var(--accent)" : "var(--ink)" }}
-                      onClick={() => tracked && nav("game", { appid: Number(c.appid) })}>
-                      {c.name}
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      cursor: tracked ? "pointer" : "default",
+                      color: st.status === "perfect" ? "var(--accent)" : owned === false ? "var(--muted)" : "var(--ink)" }}
+                      onClick={() => tracked && nav("game", { appid })}
+                      title={owned === false ? "Not owned yet" : undefined}>
+                      {c.name}{owned === false && " 🕸"}
                     </span>
-                    {st.status === "perfect" && <span style={{ color: "var(--accent)", fontSize: 12 }}>✓ 100%</span>}
-                    {st.status === "progress" && <span style={{ width: 60 }}><PctBar pct={st.pct} /></span>}
-                    {st.status === "untracked" && <span style={{ fontSize: 11, color: "var(--faint)" }}>○</span>}
+                    {sortNote && <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>{sortNote}</span>}
+                    <Stars value={c.fun ?? 0} disabled={busy}
+                      onSet={(v) => mutate("setCenturyFun", { steamid: viewing, appid, fun: v },
+                        () => v ? `${c.name}: ${"★".repeat(v)}` : `${c.name}: rating cleared`)} />
+                    {tracked ? (
+                      <span style={{ width: 74, display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
+                        <span style={{ flex: 1 }}><PctBar pct={st.pct} /></span>
+                        <span style={{ fontSize: 10, color: st.status === "perfect" ? "var(--accent)" : "var(--muted)", width: 27, textAlign: "right" }}>
+                          {st.pct}%
+                        </span>
+                      </span>
+                    ) : (
+                      <span style={{ width: 74, fontSize: 11, color: "var(--faint)", textAlign: "right", flexShrink: 0 }}>○</span>
+                    )}
                     <button title="Remove" style={{ ...S.btnGhost, padding: "0 7px", color: "var(--faint)" }} disabled={busy}
-                      onClick={() => mutate("removeCentury", { steamid: viewing, appid: Number(c.appid) },
+                      onClick={() => mutate("removeCentury", { steamid: viewing, appid },
                         () => `${c.name} leaves the hundred`)}>×</button>
                   </div>
                 );
@@ -213,7 +311,6 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
             </div>
           </div>
 
-          {/* common ground */}
           {shared.length > 0 && (
             <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 10 }}>Common ground</div>

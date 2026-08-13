@@ -7,3 +7,6 @@ create table if not exists century (
   primary key (steamid, appid)
 );
 alter table century enable row level security;
+
+-- fun rating (0–5 stars), per member per pick
+alter table century add column if not exists fun smallint not null default 0;

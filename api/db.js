@@ -210,6 +210,13 @@ export default async function handler(req, res) {
         if (error) return fail(500, error.message);
         return res.status(200).json({ ok: true });
       }
+      case "setCenturyFun": {
+        const fun = Math.max(0, Math.min(5, Number(body.fun) || 0));
+        const { error } = await supabase.from("century").update({ fun })
+          .eq("steamid", body.steamid).eq("appid", Number(body.appid));
+        if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
       case "removeCentury": {
         const { error } = await supabase.from("century").delete()
           .eq("steamid", body.steamid).eq("appid", Number(body.appid));

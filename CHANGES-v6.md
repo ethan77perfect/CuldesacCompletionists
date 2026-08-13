@@ -21,3 +21,16 @@ Hard 100 cap enforced server-side.
   games in ownership.
 - "My hundred only": restricts the spin to the spinner's Century
   list. Filters stack.
+
+## v6.0 polish — the shiny hundred
+- Perfected covers wear an ornate GOLD gradient frame with a soft glow
+  (no more ✓ overlay — the frame is the trophy).
+- Unowned games (they dream of it, don't own it) go dusty: desaturated
+  and dimmed, 🕸 in the list. Skipped when ownership is unknowable
+  (private game list).
+- Roll Call is now "The 100": every tracked game shows its progress
+  bar + %, and the list sorts by added order, A–Z, difficulty,
+  playtime, points earned, last played (new: pulled from Steam), or
+  ★ fun rating — set inline with clickable stars (click again to
+  clear). The yearbook wall reshuffles to match the sort.
+- Migration v6 now includes the fun column (re-running is safe).

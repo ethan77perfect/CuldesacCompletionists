@@ -392,12 +392,15 @@ export function buildClubStats(clubData, meta, settings) {
   const profilesPlaytime = Object.fromEntries(
     Object.entries(profiles).map(([sid, p]) => [sid, p.playtime ?? {}])
   );
+  const profilesLastPlayed = Object.fromEntries(
+    Object.entries(profiles).map(([sid, p]) => [sid, p.lastPlayed ?? {}])
+  );
 
   return {
     games, byId, board, seasonBoard, contractBoard, contractView,
     season: quarterOf(), events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
-    histogram, scatter, clubTotals, perPlayer, profilesPlaytime,
+    histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesLastPlayed,
   };
 }
 
