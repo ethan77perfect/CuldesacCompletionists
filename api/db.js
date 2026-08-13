@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -75,6 +75,7 @@ export default async function handler(req, res) {
         supabase.from("claims").select("*").order("claimed_at"),
         supabase.from("pioneers").select("*"),
         supabase.from("century").select("*").order("added_at"),
+        supabase.from("covers").select("*"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -94,6 +95,7 @@ export default async function handler(req, res) {
         claims: claims.data ?? [],
         pioneers: pioneers.error ? [] : (pioneers.data ?? []),   // tolerate pre-v5 DBs
         century: century.error ? [] : (century.data ?? []),       // tolerate pre-v6 DBs
+        covers: covers.error ? [] : (covers.data ?? []),          // tolerate pre-v7 DBs
       });
     }
 
@@ -208,6 +210,19 @@ export default async function handler(req, res) {
           steamid: body.steamid, appid: Number(body.appid), name: String(body.name ?? `App ${body.appid}`).slice(0, 120),
         });
         if (error) return fail(500, error.message);
+        return res.status(200).json({ ok: true });
+      }
+      case "setCover": {
+        const appid = Number(body.appid);
+        const url = String(body.url ?? "").trim();
+        if (!url) {   // empty = back to Steam's default art
+          const { error } = await supabase.from("covers").delete().eq("appid", appid);
+          if (error) return fail(500, error.message);
+          return res.status(200).json({ ok: true });
+        }
+        if (!/^https?:\/\//.test(url)) return fail(400, "Cover must be a full http(s) image URL");
+        const { error } = await supabase.from("covers").upsert({ appid, url: url.slice(0, 500), updated_at: new Date().toISOString() });
+        if (error) return fail(500, error.message + " — run migration-v7.sql?");
         return res.status(200).json({ ok: true });
       }
       case "setCenturyFun": {

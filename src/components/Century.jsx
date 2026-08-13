@@ -24,14 +24,15 @@ import { S, PctBar } from "./ui.jsx";
 
 const GOLD = "linear-gradient(140deg, #8A6A14, #F7E27E 28%, #B8860B 52%, #FFF3B0 78%, #9C7A1C)";
 
-function Cover({ appid, name, status, pct, owned }) {
-  const [stage, setStage] = useState(0);   // 0 portrait → 1 header → 2 placeholder
+function Cover({ appid, name, status, pct, owned, override }) {
+  const [stage, setStage] = useState(0);   // 0 override (if any) → portrait → header → placeholder
   const urls = [
+    ...(override ? [override] : []),
     `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/library_600x900.jpg`,
     `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/header.jpg`,
   ];
   const dusty = owned === false;   // owned === null → ownership unknown, no dust
-  const img = stage < 2 ? (
+  const img = stage < urls.length ? (
     <img src={urls[stage]} alt={name} loading="lazy" onError={() => setStage(stage + 1)}
       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block",
         filter: dusty ? "grayscale(0.95) brightness(0.72) contrast(0.9)" : "none" }} />
@@ -134,6 +135,19 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
     return { chosen: list.length, perfect, untracked };
   };
 
+  const coverOf = useMemo(() =>
+    Object.fromEntries((meta.covers ?? []).map((cv) => [Number(cv.appid), cv.url])), [meta.covers]);
+
+  function editCover(appid, name) {
+    const current = coverOf[appid] ?? "";
+    const url = window.prompt(
+      `Custom cover for "${name}" — paste an image URL (steamgriddb.com is great for this).\nLeave empty and press OK to reset to Steam's default art.`,
+      current);
+    if (url === null) return;   // cancelled
+    mutate("setCover", { appid, url },
+      () => url.trim() ? `Custom cover set for ${name} (club-wide)` : `${name} back to Steam's default art`);
+  }
+
   const mine = countsOf(viewing);
   const inList = new Set(listOf(viewing).map((c) => Number(c.appid)));
 
@@ -220,7 +234,8 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
               const appid = Number(c.appid);
               const st = statusOf(viewing, appid);
               const owned = ownershipKnown ? playtime[appid] !== undefined : null;
-              return <Cover key={c.appid} appid={c.appid} name={c.name} status={st.status} pct={st.pct} owned={owned} />;
+              return <Cover key={`${c.appid}-${coverOf[appid] ?? ""}`} appid={c.appid} name={c.name}
+                status={st.status} pct={st.pct} owned={owned} override={coverOf[appid]} />;
             })}
           </div>
         </div>
@@ -302,6 +317,9 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                     ) : (
                       <span style={{ width: 74, fontSize: 11, color: "var(--faint)", textAlign: "right", flexShrink: 0 }}>○</span>
                     )}
+                    <button title={coverOf[appid] ? "Custom cover set — click to change or reset" : "Set a custom cover image"}
+                      style={{ ...S.btnGhost, padding: "0 6px", color: coverOf[appid] ? "var(--accent)" : "var(--faint)" }}
+                      disabled={busy} onClick={() => editCover(appid, c.name)}>🖼</button>
                     <button title="Remove" style={{ ...S.btnGhost, padding: "0 7px", color: "var(--faint)" }} disabled={busy}
                       onClick={() => mutate("removeCentury", { steamid: viewing, appid },
                         () => `${c.name} leaves the hundred`)}>×</button>
