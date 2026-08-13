@@ -108,7 +108,7 @@ export function buildClubStats(clubData, meta, settings) {
         events.push({
           sid, appid: g.appid, gameName: g.name, t: u.t, kind: "unlock",
           pts: base + fb + pio, firstBlood: fb > 0, pioneer: pio > 0,
-          achId: u.id, achName: a?.name ?? u.id, pct: a?.pct ?? 0, provisional: a?.provisional ?? false,
+          achId: u.id, achName: a?.name ?? u.id, pct: a ? a.pct : null, provisional: a ? a.provisional : true,
         });
       }
       if (r.complete && r.lastUnlock) {

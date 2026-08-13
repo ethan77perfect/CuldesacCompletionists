@@ -24,3 +24,19 @@ rate is ≤1% is provable. The nightly cron records those permanently
 Pioneer. +25% points on pioneer unlocks (settings.pioneerBonus),
 🚩 in the feed and Discord digest, a profile stat, and Pioneer (1+) /
 Trailblazer (10+) badges. Thresholds: settings.pioneerPct (default 1.0).
+
+## v5.0 hotfix — the Peak follow-ups
+- Achievement lists are now the UNION of the schema endpoint (knows new
+  achievements immediately) and the global-percentages endpoint (lags
+  behind updates). Newly added achievements appear on game pages right
+  away as ⏳ Unrated with proper names, and graduate automatically.
+- Feed events for achievements missing from the table show Unrated
+  instead of a false "0.00%".
+- Game page sorts Unrated rows to the bottom, not fake-rarest top.
+- Pioneer GRADUATION: when an achievement transitions from unknown to a
+  real sub-threshold %, everyone already holding it gets their 🚩
+  recorded retroactively (catches unlocks made during the 0.0% window).
+
+Difficulty lifecycle is fully automatic (verified): unknown 0.0% → no
+effect; real 0.2–0.5% arrives → difficulty and point values jump; as
+the world catches up (5–15%) → decays back down. Set and forget.

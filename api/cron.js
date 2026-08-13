@@ -120,6 +120,10 @@ export default async function handler(req, res) {
   // early — recorded permanently, immune to the % rising later.
   // First-ever scan backfills from all current sub-threshold unlocks.
   const pioneerPct = settingsRow.data?.data?.pioneerPct ?? 1.0;
+  // previous run's per-achievement pct, for graduation detection
+  const prevAchPct = new Map();
+  for (const g of prevCache.data?.payload?.games ?? [])
+    for (const a of g.ach) prevAchPct.set(`${g.appid}|${a.id}`, a.pct);
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
   const newPioneerKeys = new Set();
   if (!existingPio.error) {
@@ -134,7 +138,12 @@ export default async function handler(req, res) {
           if (!a || a.pct <= 0 || a.pct > pioneerPct) continue;   // 0.0% = unknown, never counts
           const keyStr = `${sid}|${g.appid}|${u.id}`;
           if (have.has(keyStr)) continue;
-          if (firstScan || u.t >= prevFetchedAt) {
+          // GRADUATION: the achievement was unknown (0.0% / untracked) last
+          // run and now has a real sub-threshold value — everyone already
+          // holding it earned it while the world was at most this rare.
+          const prevPct = prevAchPct.get(`${g.appid}|${u.id}`);
+          const graduated = (prevPct === undefined || prevPct <= 0) && a.pct > 0;
+          if (firstScan || u.t >= prevFetchedAt || graduated) {
             inserts.push({ steamid: sid, appid: g.appid, achid: u.id,
               unlocked_at: u.t ? new Date(u.t * 1000).toISOString() : null, pct_at_unlock: a.pct });
             if (!firstScan) newPioneerKeys.add(keyStr);

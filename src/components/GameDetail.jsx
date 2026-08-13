@@ -21,7 +21,8 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
   if (!g) return <p style={{ color: "var(--muted)" }}>Game not found — is it still tracked?</p>;
 
   const members = meta.members.filter((m) => g.players[m.steamid]);
-  const sorted = [...g.ach].sort((a, b) => a.pct - b.pct);
+  const sorted = [...g.ach].sort((a, b) =>
+    (a.pct <= 0 ? Infinity : a.pct) - (b.pct <= 0 ? Infinity : b.pct));   // rarest first; ⏳ Unrated last
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
