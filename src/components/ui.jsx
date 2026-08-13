@@ -25,7 +25,7 @@ export const diffColor = (d) => (d <= 3 ? "#5CB8A6" : d <= 6 ? "var(--accent)" :
 
 export const S = {
   page: { minHeight: "100vh", background: "var(--bg)", color: "var(--ink)", fontFamily: "'Inter', system-ui, sans-serif", paddingBottom: 64 },
-  wrap: { maxWidth: 1060, margin: "0 auto", padding: "0 20px" },
+  wrap: { maxWidth: "min(1720px, 96vw)", margin: "0 auto", padding: "0 20px" },
   panel: { background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: 18 },
   label: { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--label, var(--muted))", fontWeight: 600 },
   display: { fontFamily: "'Barlow Condensed', 'Arial Narrow', sans-serif" },
@@ -100,7 +100,7 @@ export function Avatar({ url, color, size = 40 }) {
   );
 }
 
-export function PctBar({ pct, color }) {
+export function PctBar({ pct, color = "var(--accent)" }) {
   return (
     <div style={{ background: "var(--border)", borderRadius: 3, height: 6, width: "100%" }}>
       <div style={{ width: `${pct}%`, background: color, height: 6, borderRadius: 3 }} />

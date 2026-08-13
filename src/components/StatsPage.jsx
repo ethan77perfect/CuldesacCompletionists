@@ -8,7 +8,7 @@
 // hard-earned unlocks visually "sink"). One <Scatter> series per
 // member gives each their color.
 // ---------------------------------------------------------------
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AreaChart, Area, BarChart, Bar, Cell, Legend, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { diffColor } from "./ui.jsx";
 import { chartInk } from "../lib/themes.js";
@@ -131,26 +131,7 @@ export default function StatsPage({ stats, nav, members, history = [] }) {
         </div>
       </div>
 
-      <div className="panel" style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 12 }}>Every unlock, by date and rarity — hard-earned sinks lower</div>
-        <ResponsiveContainer width="100%" height={300}>
-          <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-            <CartesianGrid stroke={ink.grid} />
-            <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} stroke={ink.axis} fontSize={11}
-              tickFormatter={(t) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" })} />
-            <YAxis dataKey="pct" type="number" scale="log" domain={[0.05, 100]} stroke={ink.axis} fontSize={11}
-              tickFormatter={(v) => `${v}%`} reversed />
-            <ZAxis range={[24, 24]} />
-            <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }}
-              formatter={(v, k) => k === "pct" ? [`${v.toFixed(2)}%`, "rarity"] : [fmtDate(v), "date"]}
-              labelFormatter={() => ""} />
-            {board.map((p) => (
-              <Scatter key={p.steamid} data={scatter.filter((s) => s.sid === p.steamid)}
-                fill={p.color} fillOpacity={0.7} name={p.name} />
-            ))}
-          </ScatterChart>
-        </ResponsiveContainer>
-      </div>
+      <RarityScatter scatter={scatter} board={board} ink={ink} />
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
         <div className="panel" style={S.panel}>
@@ -179,6 +160,87 @@ export default function StatsPage({ stats, nav, members, history = [] }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------
+// RarityScatter — "every unlock, by date and rarity" with a time
+// window. "All" fits everything responsively; 1y / 6mo / 1mo keep
+// ALL the data but scale the chart so only the chosen window fits
+// the panel — the rest lives behind a horizontal scroll (opens
+// scrolled to the newest unlocks; drag left to travel back in time).
+// ---------------------------------------------------------------
+const WINDOWS = { all: ["All", null], y1: ["1y", 365], m6: ["6mo", 182], m1: ["1mo", 30] };
+
+function RarityScatter({ scatter, board, ink }) {
+  const [win, setWin] = useState("all");
+  const wrapRef = useRef(null);
+  const scrollRef = useRef(null);
+  const [viewW, setViewW] = useState(900);
+
+  useEffect(() => {
+    const measure = () => wrapRef.current && setViewW(wrapRef.current.clientWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  const windowDays = WINDOWS[win][1];
+  const ts = scatter.map((s) => s.t);
+  const spanDays = ts.length ? Math.max(1, (Math.max(...ts) - Math.min(...ts)) / 86400) : 1;
+  // chart width so that exactly `windowDays` fits the visible panel
+  const chartW = windowDays ? Math.max(viewW, Math.round(viewW * (spanDays / windowDays))) : viewW;
+
+  // windowed modes open at the newest data
+  useEffect(() => {
+    if (windowDays && scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+  }, [win, chartW]);
+
+  const chart = (
+    <ScatterChart width={chartW} height={300} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+      <CartesianGrid stroke={ink.grid} />
+      <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} stroke={ink.axis} fontSize={11}
+        tickCount={windowDays ? Math.max(6, Math.round(spanDays / (windowDays / 6))) : undefined}
+        tickFormatter={(t) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" })} />
+      <YAxis dataKey="pct" type="number" scale="log" domain={[0.05, 100]} stroke={ink.axis} fontSize={11}
+        tickFormatter={(v) => `${v}%`} reversed />
+      <ZAxis range={[24, 24]} />
+      <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }}
+        formatter={(v, k) => k === "pct" ? [`${v.toFixed(2)}%`, "rarity"] : [fmtDate(v), "date"]}
+        labelFormatter={() => ""} />
+      {board.map((p) => (
+        <Scatter key={p.steamid} data={scatter.filter((s) => s.sid === p.steamid)}
+          fill={p.color} fillOpacity={0.7} name={p.name} />
+      ))}
+    </ScatterChart>
+  );
+
+  return (
+    <div className="panel" style={S.panel} ref={wrapRef}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={S.label}>Every unlock, by date and rarity — hard-earned sinks lower</div>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          {Object.entries(WINDOWS).map(([k, [label]]) => (
+            <button key={k} onClick={() => setWin(k)}
+              style={{ ...S.btnGhost, padding: "2px 10px", fontSize: 12,
+                ...(win === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}>
+              {label}
+            </button>
+          ))}
+        </span>
+      </div>
+      {windowDays ? (
+        <div ref={scrollRef} style={{ overflowX: "auto", overflowY: "hidden", paddingBottom: 4 }}>
+          {chart}
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={300}>{chart}</ResponsiveContainer>
+      )}
+      {windowDays && spanDays > windowDays && (
+        <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 4 }}>← scroll left to travel back in time</div>
+      )}
     </div>
   );
 }
