@@ -35,6 +35,7 @@ import StatsPage from "./components/StatsPage.jsx";
 import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
 import Century from "./components/Century.jsx";
+import Burndown from "./components/Burndown.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
@@ -61,7 +62,7 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["hunt", "Hunt"], ["wheel", "Wheel"], ["century", "Century"], ["challenges", "Challenges"],
+  ["hunt", "Hunt"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["challenges", "Challenges"],
   ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
@@ -435,6 +436,7 @@ export default function App() {
         {meta && page === "backlog" && <Backlog meta={meta} mutate={mutate} busy={busy} />}
         {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "century" && <Century stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
+        {stats && !empty && page === "burndown" && <Burndown stats={stats} meta={meta} history={history} nav={nav} cfg={cfg} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
 
