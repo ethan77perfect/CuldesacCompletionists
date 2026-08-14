@@ -142,16 +142,44 @@ export default function App() {
 
       // FIRST PAINT: last night's snapshot, instantly (if the cron has run).
       let haveCache = false;
+      let cachePayload = null;   // kept for the delta fetch below
       if (!skipCache) try {
         const cRes = await fetch("/api/cached");
         const c = await cRes.json();
         if (cRes.ok && c.payload?.games?.length) {
           if (!fresh()) return;
+          cachePayload = c.payload;
           setClubData(c.payload);
           setDataAsOf(c.fetched_at);
           haveCache = true;
         }
       } catch { /* no cache yet — fall through to live load */ }
+
+      // DELTA FETCH: games added since last night's cron aren't in the
+      // snapshot — grab JUST those (a handful of appids, cheap and
+      // throttle-safe) and merge, so add-day games never "go cold"
+      // while waiting for the full background refresh or tonight's cron.
+      if (haveCache) {
+        try {
+          const cachedIds = new Set((cachePayload?.games ?? []).map((g) => Number(g.appid)));
+          const missing = metaJson.games.map((g) => Number(g.appid)).filter((a) => !cachedIds.has(a));
+          if (missing.length) {
+            const sidsQ = metaJson.members.map((m) => m.steamid).join(",");
+            let extra = [];
+            for (let i = 0; i < missing.length; i += 12) {
+              const r = await fetch(`/api/club?steamids=${sidsQ}&appids=${missing.slice(i, i + 12).join(",")}&profiles=0`);
+              const j = await r.json();
+              if (r.ok) extra = extra.concat(j.games ?? []);
+            }
+            if (extra.length && fresh()) {
+              setClubData((cur) => ({
+                games: [...(cur?.games ?? []).filter((g) => !extra.some((e) => e.appid === g.appid)), ...extra],
+                profiles: cur?.profiles ?? {},
+              }));
+            }
+          }
+        } catch { /* delta is best-effort; the full refresh still runs */ }
+      }
 
       // history chart data (non-critical; ignore failures)
       fetch("/api/history").then((r) => r.json()).then((j) => fresh() && setHistory(j.rows ?? [])).catch(() => {});
