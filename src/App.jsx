@@ -19,7 +19,7 @@
 // the interrupts.
 // ---------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AreaChart, Area, BarChart, Bar, Cell, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -100,14 +100,21 @@ export default function App() {
   const [dataAsOf, setDataAsOf] = useState(null);   // set while showing last night's snapshot
   const [refreshFailed, setRefreshFailed] = useState(false);   // live refresh died; snapshot is what you get
   const [history, setHistory] = useState([]);       // daily aggregates for the progress chart
+  // Every load takes a ticket; only the NEWEST load may write state.
+  // Without this, overlapping loads (page-load refresh + a mutation's
+  // reload + a quick meta refresh) finish in arbitrary order and the
+  // stale one overwrites the fresh one — games "forget" they exist,
+  // 100%s flicker, ownership blinks. Classic async race, classic fix.
+  const loadSeq = useRef(0);
 
   // Refresh CLUB data only (members, games list, contracts, century,
   // covers, …) — no Steam round trip. This is all most mutations need:
   // rebuilding stats from existing clubData + fresh meta is instant.
   async function loadMeta() {
+    const seq = ++loadSeq.current;
     const r = await fetch("/api/db");
     const j = await r.json();
-    if (r.ok) setMeta(j);
+    if (r.ok && seq === loadSeq.current) setMeta(j);
     return j;
   }
 
@@ -116,17 +123,20 @@ export default function App() {
   // would show a world where the edit never happened ("game isn't in
   // the database"). Those flows go straight to a progressive live load.
   async function loadAll({ skipCache = false } = {}) {
+    const seq = ++loadSeq.current;
+    const fresh = () => seq === loadSeq.current;   // are we still the newest load?
     setError("");
     try {
       const metaRes = await fetch("/api/db");
       const metaJson = await metaRes.json();
       if (!metaRes.ok) throw new Error(metaJson.error);
+      if (!fresh()) return;
       setMeta(metaJson);
       setSavedSettings(metaJson.settings ?? {});
       setCfg({ ...DEFAULT_SETTINGS, ...metaJson.settings });
 
       if (!metaJson.members.length || !metaJson.games.length) {
-        setClubData({ games: [], profiles: {} });
+        if (fresh()) setClubData({ games: [], profiles: {} });
         return;
       }
 
@@ -136,6 +146,7 @@ export default function App() {
         const cRes = await fetch("/api/cached");
         const c = await cRes.json();
         if (cRes.ok && c.payload?.games?.length) {
+          if (!fresh()) return;
           setClubData(c.payload);
           setDataAsOf(c.fetched_at);
           haveCache = true;
@@ -143,7 +154,7 @@ export default function App() {
       } catch { /* no cache yet — fall through to live load */ }
 
       // history chart data (non-critical; ignore failures)
-      fetch("/api/history").then((r) => r.json()).then((j) => setHistory(j.rows ?? [])).catch(() => {});
+      fetch("/api/history").then((r) => r.json()).then((j) => fresh() && setHistory(j.rows ?? [])).catch(() => {});
 
       // THEN: live refresh in small batches so big clubs don't trip Steam rate limits.
       const sids = metaJson.members.map((m) => m.steamid).join(",");
@@ -154,34 +165,48 @@ export default function App() {
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let games = [], profiles = {};
+      // did we already have a complete dataset on screen? Then NEVER
+      // replace it with a partial one — old-but-complete beats
+      // new-but-partial every time. Progressive rendering is for cold
+      // starts only (nothing → something).
+      const hadData = Boolean(clubData?.games?.length);
       try {
       for (let ci = 0; ci < chunks.length; ci++) {
+        if (!fresh()) return;   // a newer load has taken over — abandon this one
         if (!haveCache) setLoadProgress({ done: ci, total: chunks.length });
         const url = `/api/club?steamids=${sids}&appids=${chunks[ci].join(",")}&profiles=${ci === 0 ? 1 : 0}`;
         let j = null;
         for (let attempt = 0; attempt < 3; attempt++) {
-          const r = await fetch(url);
-          const body = await r.json();
-          if (!r.ok) throw new Error(body.error);
-          j = body;
-          if (!j.failed) break;          // clean batch
-          await sleep(2500 * (attempt + 1)); // Steam throttled us — cool off, retry batch
+          try {
+            const r = await fetch(url);
+            const body = await r.json();
+            if (!r.ok) throw new Error(body.error);
+            j = body;
+            if (!j.failed) break;          // clean batch
+          } catch (e) {
+            if (attempt === 2) throw e;    // hard failures retry too, not just throttles
+          }
+          await sleep(2500 * (attempt + 1)); // cool off, retry batch
         }
         games = games.concat(j.games);
         Object.assign(profiles, j.profiles ?? {});
         // with a cache on screen, swap in live data only once it's COMPLETE —
         // partial live data replacing a full snapshot would look like regression
-        if (!haveCache) setClubData({ games: [...games], profiles: { ...profiles } });
+        if (!haveCache && !hadData && fresh()) setClubData({ games: [...games], profiles: { ...profiles } });
       }
+      if (!fresh()) return;
       setClubData({ games, profiles });
       setDataAsOf(null);
       setLoadProgress(null);
       setRefreshFailed(false);
       } catch (chunkErr) {
-        if (!haveCache) throw chunkErr;   // nothing on screen → surface the real error
-        // snapshot is on screen: keep it, stop pulsing, say what happened
+        if (!haveCache && !hadData) throw chunkErr;   // nothing on screen → surface the real error
+        // something complete is on screen (snapshot or previous live
+        // data): keep it and say what happened instead of degrading
+        if (!fresh()) return;
         setLoadProgress(null);
-        setRefreshFailed(true);
+        if (haveCache) setRefreshFailed(true);
+        else setError("Steam throttled the refresh — showing the previous data. Your change is saved; reload in a minute to see it reflected.");
       }
     } catch (e) {
       setLoadProgress(null);
