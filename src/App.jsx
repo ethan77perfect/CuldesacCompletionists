@@ -198,6 +198,7 @@ export default function App() {
       // new-but-partial every time. Progressive rendering is for cold
       // starts only (nothing → something).
       const hadData = Boolean(clubData?.games?.length);
+      let failedTotal = 0;
       try {
       for (let ci = 0; ci < chunks.length; ci++) {
         if (!fresh()) return;   // a newer load has taken over — abandon this one
@@ -217,12 +218,21 @@ export default function App() {
           await sleep(2500 * (attempt + 1)); // cool off, retry batch
         }
         games = games.concat(j.games);
+        failedTotal += j?.failed ?? 0;
         Object.assign(profiles, j.profiles ?? {});
         // with a cache on screen, swap in live data only once it's COMPLETE —
         // partial live data replacing a full snapshot would look like regression
         if (!haveCache && !hadData && fresh()) setClubData({ games: [...games], profiles: { ...profiles } });
       }
       if (!fresh()) return;
+      // GARBAGE GUARD (the frontend twin of the cron's "never snapshot
+      // garbage"): a refresh that "completed" but lost a big share of
+      // the library to throttling must NOT replace good data. Finishing
+      // the chunks isn't completeness — bringing the games back is.
+      const expected = metaJson.games.length;
+      if (games.length < Math.ceil(expected * 0.9)) {
+        throw new Error(`Steam only returned ${games.length}/${expected} games (heavy throttling)`);
+      }
       setClubData({ games, profiles });
       setDataAsOf(null);
       setLoadProgress(null);
