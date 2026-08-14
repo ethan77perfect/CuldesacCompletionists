@@ -111,7 +111,11 @@ export default function App() {
     return j;
   }
 
-  async function loadAll() {
+  // skipCache: game-set changes (add/remove game or member) must NOT
+  // repaint from last night's snapshot — it predates the change, so it
+  // would show a world where the edit never happened ("game isn't in
+  // the database"). Those flows go straight to a progressive live load.
+  async function loadAll({ skipCache = false } = {}) {
     setError("");
     try {
       const metaRes = await fetch("/api/db");
@@ -128,7 +132,7 @@ export default function App() {
 
       // FIRST PAINT: last night's snapshot, instantly (if the cron has run).
       let haveCache = false;
-      try {
+      if (!skipCache) try {
         const cRes = await fetch("/api/cached");
         const c = await cRes.json();
         if (cRes.ok && c.payload?.games?.length) {
@@ -209,7 +213,7 @@ export default function App() {
       // recompute in place. This is what stops the library from
       // "vanishing and coming back" on unrelated edits.
       if (["addGame", "removeGame", "promoteBacklog", "addMember", "removeMember"].includes(op)) {
-        await loadAll();
+        await loadAll({ skipCache: true });   // the snapshot predates this change — don't paint from it
       } else {
         await loadMeta();
       }
