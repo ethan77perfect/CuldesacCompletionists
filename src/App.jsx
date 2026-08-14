@@ -167,9 +167,12 @@ export default function App() {
             const sidsQ = metaJson.members.map((m) => m.steamid).join(",");
             let extra = [];
             for (let i = 0; i < missing.length; i += 12) {
-              const r = await fetch(`/api/club?steamids=${sidsQ}&appids=${missing.slice(i, i + 12).join(",")}&profiles=0`);
-              const j = await r.json();
-              if (r.ok) extra = extra.concat(j.games ?? []);
+              for (let attempt = 0; attempt < 2; attempt++) {
+                const r = await fetch(`/api/club?steamids=${sidsQ}&appids=${missing.slice(i, i + 12).join(",")}&profiles=0`);
+                const j = await r.json();
+                if (r.ok && (j.games ?? []).length) { extra = extra.concat(j.games); break; }
+                await sleep(2000);
+              }
             }
             if (extra.length && fresh()) {
               setClubData((cur) => ({
@@ -233,7 +236,18 @@ export default function App() {
       if (games.length < Math.ceil(expected * 0.9)) {
         throw new Error(`Steam only returned ${games.length}/${expected} games (heavy throttling)`);
       }
-      setClubData({ games, profiles });
+      // PER-GAME CARRY-FORWARD: the guard above catches catastrophe, but
+      // a harvest can still be short a few throttled games. Those keep
+      // their previous data (from the snapshot or the last good refresh)
+      // instead of flickering to "untracked" — the never-replace-better-
+      // with-worse rule, applied per game. metaIds keeps genuinely
+      // removed games from being resurrected.
+      const metaIds = new Set(metaJson.games.map((g) => Number(g.appid)));
+      setClubData((cur) => {
+        const have = new Set(games.map((g) => Number(g.appid)));
+        const carried = (cur?.games ?? []).filter((g) => !have.has(Number(g.appid)) && metaIds.has(Number(g.appid)));
+        return { games: [...games, ...carried], profiles: { ...(cur?.profiles ?? {}), ...profiles } };
+      });
       setDataAsOf(null);
       setLoadProgress(null);
       setRefreshFailed(false);
@@ -379,6 +393,16 @@ export default function App() {
               : <>Showing the latest snapshot ({new Date(dataAsOf).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}) — refreshing live in the background…</>}
           </div>
         )}
+        {(() => {   // DATA HEALTH: games in the club DB still awaiting achievement data
+          const dataIds = new Set((clubData?.games ?? []).map((g) => Number(g.appid)));
+          const waiting = clubData ? (meta?.games ?? []).filter((g) => !dataIds.has(Number(g.appid))) : [];
+          return waiting.length > 0 && (
+            <div className="panel" style={{ ...S.panel, marginBottom: 14, padding: "8px 14px", fontSize: 12, color: "var(--muted)" }}>
+              ⏳ Awaiting data for {waiting.length} game{waiting.length > 1 ? "s" : ""}: {waiting.map((g) => g.name).join(", ")}
+              <span style={{ color: "var(--faint)" }}> — added to the club, achievement data not fetched yet (usually Steam throttling; fills in on a successful refresh or tonight's snapshot).</span>
+            </div>
+          );
+        })()}
         {loadProgress && (
           <div className="panel" style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
             <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
