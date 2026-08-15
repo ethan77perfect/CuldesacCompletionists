@@ -326,9 +326,9 @@ export default function App() {
   const [newGame, setNewGame] = useState("");
 
   const board = stats
-    ? (boardMode === "season" ? stats.seasonBoard : boardMode === "contracts" ? stats.contractBoard : stats.board)
+    ? (boardMode === "month" ? stats.monthBoard : boardMode === "contracts" ? stats.contractBoard : stats.board)
     : [];
-  const pts = (p) => (boardMode === "season" ? p.seasonPoints : boardMode === "contracts" ? p.contractPts : p.points);
+  const pts = (p) => (boardMode === "month" ? p.monthPoints : boardMode === "contracts" ? p.contractPts : p.points);
 
   // LADDER LEVERS (all-time board only): the gap to the row above, and
   // the cheapest single "finish this game" that closes it. Candidates
@@ -492,12 +492,81 @@ export default function App() {
         {stats && !empty && page === "board" && (
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              {[["all", "All-time"], ["season", `This season (${stats.season})`], ["contracts", "⚔ Contract kills"]].map(([k, l]) => (
+              {[["all", "All-time"], ["month", `This month (${stats.monthLabel})`], ["contracts", "⚔ Contract kills"], ["history", "🏆 History"]].map(([k, l]) => (
                 <button key={k} style={{ ...S.btnGhost, ...(boardMode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
                   onClick={() => setBoardMode(k)}>{l}</button>
               ))}
             </div>
-            {board.map((p, i) => (
+            {boardMode === "history" && (() => {
+              const nameOf = (sid) => stats.byId[sid]?.name ?? sid;
+              const colorOf = (sid) => stats.byId[sid]?.color;
+              const banners = stats.board.filter((p) => p.monthWins > 0)
+                .sort((a, b) => b.monthWins - a.monthWins);
+              return (
+                <>
+                  <div className="panel" style={{ ...S.panel, display: "flex", gap: 16, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span style={S.label}>Banners</span>
+                    {banners.length ? banners.map((p) => (
+                      <span key={p.steamid} style={{ fontSize: 14, cursor: "pointer" }} onClick={() => nav(`/player/${p.steamid}`)}>
+                        <b style={{ color: p.color }}>{p.name}</b>
+                        <span style={{ color: "var(--accent)" }}> 🏆×{p.monthWins}</span>
+                      </span>
+                    )) : (
+                      <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                        No crowns yet — the first is awarded when {stats.monthLabel} ends.
+                      </span>
+                    )}
+                  </div>
+                  {[...stats.monthHistory].reverse().map((mo) => (
+                    <div key={mo.month} className="panel" style={S.panel}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 10, flexWrap: "wrap" }}>
+                        <span style={{ ...S.display, fontSize: 17, fontWeight: 700 }}>{mo.label}</span>
+                        {mo.done ? (
+                          mo.winners.length
+                            ? <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>
+                                👑 {mo.winners.map(nameOf).join(" & ")}
+                              </span>
+                            : <span style={{ fontSize: 12, color: "var(--faint)" }}>the club slept — no crown awarded</span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: "var(--muted)", border: "1px solid var(--border)",
+                            borderRadius: 999, padding: "2px 10px" }}>
+                            in progress — current standings, crown at month's end
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {mo.standings.map((row, i) => {
+                          const crowned = mo.done && mo.winners.includes(row.sid);
+                          return (
+                            <div key={row.sid} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 13 }}>
+                              <span style={{ width: 18, color: "var(--faint)", fontSize: 11, textAlign: "right" }}>{i + 1}.</span>
+                              <a style={{ width: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                color: colorOf(row.sid), fontWeight: crowned ? 700 : 500, cursor: "pointer" }}
+                                onClick={() => nav(`/player/${row.sid}`)}>
+                                {crowned && "👑 "}{nameOf(row.sid)}
+                              </a>
+                              <span style={{ ...S.display, minWidth: 76, textAlign: "right", fontWeight: 700,
+                                color: crowned ? "var(--accent)" : !mo.done && i === 0 && row.pts > 0 ? "var(--ink-strong)" : "var(--muted)" }}>
+                                {row.pts.toLocaleString()}
+                              </span>
+                              <span style={{ fontSize: 12, color: "var(--faint)" }}>
+                                {row.unlocks} unlock{row.unlocks === 1 ? "" : "s"}
+                                {!mo.done && i === 0 && row.pts > 0 && " · leading"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px" }}>
+                    One crown per finished month, scored in the main points economy. Ties crown co-champions.
+                    The record starts August 2026 — earlier unlocks count all-time, but there are no retroactive crowns.
+                  </p>
+                </>
+              );
+            })()}
+            {boardMode !== "history" && board.map((p, i) => (
               <div key={p.steamid} className="panel" style={{ ...S.panel, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ ...S.display, fontSize: 32, fontWeight: 700, color: i === 0 ? "var(--accent)" : "var(--faint)", width: 36 }}>{i + 1}</div>
                 <Avatar url={p.avatar} color={p.color} size={44} />
@@ -512,7 +581,9 @@ export default function App() {
                 </div>
                 {[
                   ["Perfects", p.perfects, "var(--ink-strong)"],
-                  boardMode === "contracts" ? ["Kills", p.contractKills, "var(--muted)"] : ["Streak", `${p.streak.current}w`, "var(--muted)"],
+                  boardMode === "contracts" ? ["Kills", p.contractKills, "var(--muted)"]
+                    : boardMode === "month" ? ["Achievements", p.monthUnlocks, "var(--muted)"]
+                    : ["Streak", `${p.streak.current}w`, "var(--muted)"],
                   ["Points", pts(p).toLocaleString(), "var(--accent)"],
                 ].map(([l, v, c]) => (
                   <div key={l} style={{ textAlign: "right", minWidth: 74 }}>
@@ -522,13 +593,15 @@ export default function App() {
                 ))}
               </div>
             ))}
-            <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px" }}>
-              {boardMode === "contracts"
-                ? "Contract kills: achievements and points earned under an active wheel contract or club bounty."
-                : boardMode === "season"
-                ? "Season points count only unlocks earned this quarter — all-time totals are untouched."
-                : <>Points accrue per achievement (rarity-weighted, +{Math.round((cfg.firstBloodPct ?? 0.1) * 100)}% first-blood bonus 🩸) — {Math.round(cfg.bonus * 100)}% of each pool only lands on 100%.</>}
-            </p>
+            {boardMode !== "history" && (
+              <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 2px" }}>
+                {boardMode === "contracts"
+                  ? "Contract kills: achievements and points earned under an active wheel contract or club bounty."
+                  : boardMode === "month"
+                  ? "Month points count only what's earned this calendar month — all-time totals are untouched. Crown awarded when the month ends (🏆 History)."
+                  : <>Points accrue per achievement (rarity-weighted, +{Math.round((cfg.firstBloodPct ?? 0.1) * 100)}% first-blood bonus 🩸) — {Math.round(cfg.bonus * 100)}% of each pool only lands on 100%.</>}
+              </p>
+            )}
           </div>
         )}
 

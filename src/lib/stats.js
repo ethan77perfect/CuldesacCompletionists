@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------
 // stats.js — the club brain. Takes raw /api/club data + /api/db
-// meta + settings and derives every feature: leaderboards, seasons,
+// meta + settings and derives every feature: leaderboards, monthly crowns,
 // first blood, streaks, feed, records, hall of fame, graveyard,
 // recommendations, races, challenge standings, badges, timeline.
 // ---------------------------------------------------------------
@@ -23,10 +23,15 @@ const isoWeek = (t) => {
   const wk = Math.ceil(((day - y0) / 86400000 + 1) / 7);
   return `${day.getUTCFullYear()}-W${String(wk).padStart(2, "0")}`;
 };
-export const quarterOf = (date = new Date()) =>
-  `${date.getFullYear()} Q${Math.floor(date.getMonth() / 3) + 1}`;
-const quarterStart = (date = new Date()) =>
-  new Date(date.getFullYear(), Math.floor(date.getMonth() / 3) * 3, 1).getTime() / 1000;
+export const monthLabelOf = (date = new Date()) =>
+  date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+const monthStart = (date = new Date()) =>
+  new Date(date.getFullYear(), date.getMonth(), 1).getTime() / 1000;
+
+// The club's recorded era: one crown per finished calendar month, from
+// here forward. Unlocks before this still count all-time — there are
+// just no retroactive crowns for months the club wasn't keeping score.
+const CHAMPIONSHIP_START = "2026-08";
 
 // Rarity tier table — first row whose `min` the percentage meets wins.
 // Reorder/rename/recolor freely; TierChip in ui.jsx renders these.
@@ -86,7 +91,7 @@ export function buildClubStats(clubData, meta, settings) {
   });
 
   // ---- events: the timeline backbone ----
-  // Everything time-based (feed, charts, seasons, streaks, records)
+  // Everything time-based (feed, charts, crowns, streaks, records)
   // is built from this one flat list. Each unlock becomes an event
   // carrying its point value; each 100% adds a completion-bonus
   // event; the earliest unlocker of each achievement gets the
@@ -175,11 +180,11 @@ export function buildClubStats(clubData, meta, settings) {
   }
   events.sort((a, b) => a.t - b.t);
 
-  // ---- totals, season, streaks ----
-  const seasonCut = quarterStart();
+  // ---- totals, month, streaks ----
+  const monthCut = monthStart();
   const perPlayer = Object.fromEntries(members.map((m) => [m.steamid, {
     ...m, avatar: profiles[m.steamid]?.avatar ?? null,
-    points: 0, seasonPoints: 0, perfects: 0, started: 0,
+    points: 0, monthPoints: 0, monthUnlocks: 0, perfects: 0, started: 0,
     weeks: new Set(), rarestUnlock: null, spans: [], playtimeMin: 0,
   }]));
   for (const e of events) {
@@ -190,7 +195,7 @@ export function buildClubStats(clubData, meta, settings) {
       p.contractPts = (p.contractPts ?? 0) + e.pts;
       if (e.kind === "unlock") p.contractKills = (p.contractKills ?? 0) + 1;
     }
-    if (e.t >= seasonCut) p.seasonPoints += e.pts;
+    if (e.t >= monthCut) { p.monthPoints += e.pts; if (e.kind === "unlock") p.monthUnlocks += 1; }
     p.weeks.add(isoWeek(e.t));
     if (e.kind === "unlock" && e.pioneer) p.pioneerCount = (p.pioneerCount ?? 0) + 1;
     if (e.kind === "unlock" && !e.provisional && e.pct > 0 && (!p.rarestUnlock || e.pct < p.rarestUnlock.pct)) p.rarestUnlock = e;
@@ -228,12 +233,60 @@ export function buildClubStats(clubData, meta, settings) {
     p.points = Math.round(p.points);
     p.contractPts = Math.round(p.contractPts ?? 0);
     p.contractKills = p.contractKills ?? 0;
-    p.seasonPoints = Math.round(p.seasonPoints);
+    p.monthPoints = Math.round(p.monthPoints);
     p.avgSpanDays = p.spans.length ? p.spans.reduce((s, x) => s + x.days, 0) / p.spans.length : null;
     p.closerRate = p.started ? p.perfects / p.started : 0;
     p.hardestClear = games.filter((g) => g.players[p.steamid]?.complete)
       .reduce((m, g) => (g.diff > (m?.diff ?? 0) ? g : m), null);
   }
+
+  // ---- monthly championship ----
+  // One crown per FINISHED calendar month, scored in the main points
+  // economy — the same event pts that feed the all-time board (unlocks,
+  // completion bonuses, first blood, pioneer, contracts, claims). Hunt
+  // points stay their own economy, as ever. Ties = co-champions.
+  const nowMonth = monthKey(Date.now() / 1000);
+  const monthTotals = new Map();   // "YYYY-MM" -> { sid: { pts, unlocks } }
+  for (const e of events) {
+    const k = monthKey(e.t);
+    if (k < CHAMPIONSHIP_START) continue;
+    if (!monthTotals.has(k)) monthTotals.set(k, {});
+    const row = (monthTotals.get(k)[e.sid] ??= { pts: 0, unlocks: 0 });
+    row.pts += e.pts;
+    if (e.kind === "unlock") row.unlocks += 1;
+  }
+  const monthHistory = [];
+  {
+    let [y, m] = CHAMPIONSHIP_START.split("-").map(Number);
+    const [ny, nm] = nowMonth.split("-").map(Number);
+    while (y < ny || (y === ny && m <= nm)) {   // every era month, even silent ones
+      const key = `${y}-${String(m).padStart(2, "0")}`;
+      const bucket = monthTotals.get(key) ?? {};
+      const standings = members.map((mm) => ({
+        sid: mm.steamid,
+        pts: Math.round(bucket[mm.steamid]?.pts ?? 0),
+        unlocks: bucket[mm.steamid]?.unlocks ?? 0,
+      })).sort((a, b) => b.pts - a.pts || b.unlocks - a.unlocks);
+      const top = standings[0]?.pts ?? 0;
+      const winners = top > 0 ? standings.filter((x) => x.pts === top).map((x) => x.sid) : [];
+      monthHistory.push({
+        month: key,
+        label: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+        done: key < nowMonth, standings, winners,
+      });
+      m++; if (m > 12) { m = 1; y++; }
+    }
+  }
+  for (const p of Object.values(perPlayer)) p.monthWins = 0;
+  for (const mo of monthHistory) {
+    if (!mo.done) continue;
+    for (const w of mo.winners) if (perPlayer[w]) perPlayer[w].monthWins += 1;
+  }
+  const finishedMonths = monthHistory.filter((mo) => mo.done && mo.winners.length);
+  const lastCrowned = finishedMonths[finishedMonths.length - 1];
+  const reigning = lastCrowned
+    ? { month: lastCrowned.month, label: lastCrowned.label, sids: lastCrowned.winners }
+    : null;
 
   // ---- races ----
   const races = games.filter((g) => g.race).map((g) => {
@@ -330,6 +383,8 @@ export function buildClubStats(clubData, meta, settings) {
     ["Iron Streak", (p) => p.streak.best >= 8],
     ["Speedrunner", (p) => p.spans.some((s) => s.days <= 7)],
     ["Marathoner", (p) => p.spans.some((s) => s.days >= 365)],
+    ["Month Champion", (p) => (p.monthWins ?? 0) >= 1],
+    ["Dynasty", (p) => (p.monthWins ?? 0) >= 3],
     ["Pioneer", (p) => (p.pioneerCount ?? 0) >= 1],
     ["Trailblazer", (p) => (p.pioneerCount ?? 0) >= 10],
   ];
@@ -363,7 +418,7 @@ export function buildClubStats(clubData, meta, settings) {
   }
 
   const board = Object.values(perPlayer).sort((a, b) => b.points - a.points);
-  const seasonBoard = [...board].sort((a, b) => b.seasonPoints - a.seasonPoints);
+  const monthBoard = [...board].sort((a, b) => b.monthPoints - a.monthPoints);
   const contractBoard = [...board].sort((a, b) => b.contractPts - a.contractPts);
 
   // enriched contract list for the Wheel page: fulfilled if the game hit
@@ -399,8 +454,8 @@ export function buildClubStats(clubData, meta, settings) {
   );
 
   return {
-    games, byId, board, seasonBoard, contractBoard, contractView,
-    season: quarterOf(), events, feed,
+    games, byId, board, monthBoard, contractBoard, contractView,
+    monthLabel: monthLabelOf(), monthHistory, reigning, events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
     histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesLastPlayed,
   };

@@ -29,6 +29,23 @@ export default function Home({ stats, nav }) {
         ))}
       </div>
 
+      {stats.reigning && (
+        <div className="panel" style={{ ...S.panel, gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 17 }}>👑</span>
+          <span style={{ fontSize: 14 }}>
+            Reigning monthly champion{stats.reigning.sids.length > 1 ? "s" : ""}:{" "}
+            {stats.reigning.sids.map((sid, i) => (
+              <b key={sid} style={{ color: byId[sid]?.color, cursor: "pointer" }} onClick={() => nav(`/player/${sid}`)}>
+                {i > 0 ? " & " : ""}{byId[sid]?.name ?? sid}
+              </b>
+            ))}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            — took {stats.reigning.label}. The crown is defended on the leaderboard's month tab.
+          </span>
+        </div>
+      )}
+
       <div className="panel" style={S.panel}>
         <div style={{ ...S.label, marginBottom: 12 }}>Activity</div>
         {feed.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13 }}>No unlocks yet — go earn something.</p>}

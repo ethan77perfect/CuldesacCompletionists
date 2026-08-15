@@ -58,7 +58,7 @@ export default function Compare({ stats, meta, nav }) {
             {[
               ["Points", A.points.toLocaleString(), B.points.toLocaleString()],
               ["Perfects", A.perfects, B.perfects],
-              ["Season pts", A.seasonPoints.toLocaleString(), B.seasonPoints.toLocaleString()],
+              ["Month pts", A.monthPoints.toLocaleString(), B.monthPoints.toLocaleString()],
               ["Best streak", `${A.streak.best}w`, `${B.streak.best}w`],
             ].map(([l, va, vb]) => (
               <div key={l} style={{ textAlign: "center" }}>
