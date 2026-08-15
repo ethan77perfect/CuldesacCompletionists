@@ -89,7 +89,13 @@ export default async function handler(req, res) {
   }
 
   // ---- 3. write cache + snapshot rows ----
-  const today = new Date().toISOString().slice(0, 10);
+  // Club-local date, not UTC: the 10pm Eastern run is 02:00–03:00 UTC
+  // *tomorrow*, so toISOString() stamped every snapshot one day ahead of
+  // the evening it captured. en-CA formats as YYYY-MM-DD directly.
+  // One-time effect at changeover: the first club-stamped run lands on
+  // the same `day` as the last UTC-stamped one and upserts over it —
+  // two evenings merge into one row, once, then history is clean.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: CLUB_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const rows = [];
   for (const g of data.games) {
     for (const sid of steamids) {

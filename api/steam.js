@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------
-// NOTE: legacy debugging proxy — the site itself no longer calls
-// this (it uses /api/club + /api/db). Kept because it is handy for
-// poking individual Steam endpoints in the browser. Safe to delete.
+// NOTE: mostly a debugging proxy — but NOT safe to delete: the
+// Century page's add-a-game search box calls ?op=search. Everything
+// else here is browser-poking convenience (/api/club + /api/db serve
+// the site itself).
 // ---------------------------------------------------------------
 // /api/steam — one serverless proxy for every Steam Web API call.
 // Keeps STEAM_API_KEY server-side and adds CDN caching so the

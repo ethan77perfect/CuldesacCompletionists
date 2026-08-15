@@ -69,7 +69,9 @@ export function buildClubStats(clubData, meta, settings) {
       players[m.steamid] = {
         unlocks,
         basePoints: earned + (complete ? table.bonusPts : 0),
-        pct: raw.ach.length ? Math.round((unlocks.length / raw.ach.length) * 100) : 0,
+        // cap at 99 unless truly complete: 249/250 rounds to 100, and a
+        // "100%" PctBar on an incomplete game reads as a lie
+        pct: complete ? 100 : raw.ach.length ? Math.min(99, Math.round((unlocks.length / raw.ach.length) * 100)) : 0,
         complete, lastUnlock,
         firstUnlock: firstUnlock === Infinity ? 0 : firstUnlock,
         missing: raw.ach.filter((a) => !unlocks.some((u) => u.id === a.id)),

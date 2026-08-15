@@ -40,6 +40,14 @@ import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
 
+// Module-scope on purpose: BOTH retry loops in loadAll use this (the
+// delta fetch and the live batch loop). It used to be declared between
+// them, which put the delta's `await sleep(2000)` in the temporal dead
+// zone — a ReferenceError that the delta's catch silently ate, so one
+// throttled chunk aborted the whole delta merge and the "retry" never
+// retried. Hoisted here so that can't happen again.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // ---- tiny hash router ----
 // The URL hash ("#/game/123") is our page address. Why hash instead
 // of real paths (/game/123)? Because this is a static site: Vercel
@@ -195,7 +203,6 @@ export default function App() {
       const chunks = [];
       for (let i = 0; i < appids.length; i += BATCH) chunks.push(appids.slice(i, i + BATCH));
 
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let games = [], profiles = {};
       // did we already have a complete dataset on screen? Then NEVER
       // replace it with a partial one — old-but-complete beats
