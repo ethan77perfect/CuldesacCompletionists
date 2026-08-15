@@ -64,7 +64,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -76,6 +76,8 @@ export default async function handler(req, res) {
         supabase.from("pioneers").select("*"),
         supabase.from("century").select("*").order("added_at"),
         supabase.from("covers").select("*"),
+        supabase.from("bingo_rounds").select("*").order("created_at"),
+        supabase.from("bingo_cards").select("*"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -96,6 +98,8 @@ export default async function handler(req, res) {
         pioneers: pioneers.error ? [] : (pioneers.data ?? []),   // tolerate pre-v5 DBs
         century: century.error ? [] : (century.data ?? []),       // tolerate pre-v6 DBs
         covers: covers.error ? [] : (covers.data ?? []),          // tolerate pre-v7 DBs
+        bingoRounds: bingoRounds.error ? [] : (bingoRounds.data ?? []),   // tolerate pre-v9 DBs
+        bingoCards: bingoCards.error ? [] : (bingoCards.data ?? []),      // tolerate pre-v9 DBs
       });
     }
 
@@ -307,6 +311,34 @@ export default async function handler(req, res) {
         if (error) return fail(500, error.message);
         return res.status(200).json({ ok: true });
       }
+      case "dealBingo": {
+        // Cards are generated CLIENT-side (the browser holds the freshest
+        // achievement data); this op just validates and persists the deal.
+        const label = String(body.label ?? "").trim().slice(0, 60) || "Untitled round";
+        const cards = Array.isArray(body.cards) ? body.cards : [];
+        if (!cards.length) return fail(400, "No cards to deal");
+        for (const c of cards) {
+          if (!/^\d{17}$/.test(String(c.steamid ?? ""))) return fail(400, "Bad steamid in a card");
+          if (!Array.isArray(c.cells) || !c.cells.length || c.cells.length > 24)
+            return fail(400, "Cards must have 1-24 cells");
+        }
+        const round = await supabase.from("bingo_rounds").insert({ label }).select().single();
+        if (round.error)
+          return fail(500, `bingo_rounds insert failed: ${round.error.message} — run supabase/migration-v9.sql?`);
+        const rows = cards.map((c) => ({ round_id: round.data.id, steamid: c.steamid, cells: c.cells }));
+        const w = await supabase.from("bingo_cards").insert(rows);
+        if (w.error) return fail(500, `bingo_cards insert failed: ${w.error.message}`);
+        return res.status(200).json({ ok: true, roundId: round.data.id, dealt: rows.length });
+      }
+
+      case "deleteBingo": {
+        const id = Number(body.roundId);
+        if (!id) return fail(400, "roundId required");
+        const d = await supabase.from("bingo_rounds").delete().eq("id", id);   // cards cascade
+        if (d.error) return fail(500, d.error.message);
+        return res.status(200).json({ ok: true });
+      }
+
       default:
         return fail(400, `Unknown op '${op}'`);
     }

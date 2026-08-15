@@ -38,6 +38,7 @@ import Century from "./components/Century.jsx";
 import Burndown from "./components/Burndown.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
+import Bingo from "./components/Bingo.jsx";
 import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
 
 // Module-scope on purpose: BOTH retry loops in loadAll use this (the
@@ -70,7 +71,7 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["hunt", "Hunt"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["challenges", "Challenges"],
+  ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["challenges", "Challenges"],
   ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
@@ -329,6 +330,46 @@ export default function App() {
     : [];
   const pts = (p) => (boardMode === "season" ? p.seasonPoints : boardMode === "contracts" ? p.contractPts : p.points);
 
+  // LADDER LEVERS (all-time board only): the gap to the row above, and
+  // the cheapest single "finish this game" that closes it. Candidates
+  // are started-incomplete games — "finish Elden Ring (0% in)" is a
+  // wish, not a plan. ptsLeft = pool − basePoints, so the completion
+  // bonus is included and a 95%-done game shows its true payout.
+  const levers = useMemo(() => {
+    if (!stats) return {};
+    const cands = {};
+    for (const g of stats.games) {
+      for (const [sid, r] of Object.entries(g.players)) {
+        if (!r.unlocks.length || r.complete) continue;
+        (cands[sid] ??= []).push({ appid: g.appid, name: g.name, pct: r.pct,
+          ptsLeft: Math.max(1, Math.round(g.pool - r.basePoints)) });
+      }
+    }
+    for (const list of Object.values(cands)) list.sort((a, b) => a.ptsLeft - b.ptsLeft);
+    return cands;
+  }, [stats]);
+  const leverLine = (i) => {
+    const b = stats.board;                    // levers speak all-time points
+    const p = b[i];
+    if (i === 0) {
+      const chaser = b[1];
+      if (!chaser) return <>👑 Uncontested.</>;
+      const back = p.points - chaser.points;
+      return back <= 0 ? <>👑 Tied at the top — any unlock decides it.</>
+        : <>👑 {chaser.name} is {back.toLocaleString()} pts back — don't sleep.</>;
+    }
+    const gap = b[i - 1].points - p.points;
+    if (gap <= 0) return <>▲ Tied with {b[i - 1].name} — any unlock breaks it.</>;
+    const list = levers[p.steamid] ?? [];
+    const pass = list.find((c) => c.ptsLeft >= gap);
+    if (pass) return <>▲ {gap.toLocaleString()} behind {b[i - 1].name} · cheapest pass: finish{" "}
+      <a style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}
+        onClick={() => nav(`/game/${pass.appid}`)}>{pass.name}</a> ({pass.pct}% in) → +{pass.ptsLeft.toLocaleString()}</>;
+    const best = list[list.length - 1];
+    if (best) return <>▲ {gap.toLocaleString()} behind {b[i - 1].name} · biggest move: finish {best.name} (+{best.ptsLeft.toLocaleString()}) — {(gap - best.ptsLeft).toLocaleString()} still short</>;
+    return <>▲ {gap.toLocaleString()} behind {b[i - 1].name} · nothing started to finish — crack a game open</>;
+  };
+
   return (
     <div className="app-bg" style={S.page}>
       <style>{`
@@ -445,6 +486,7 @@ export default function App() {
         {stats && !empty && page === "century" && <Century stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "burndown" && <Burndown stats={stats} meta={meta} history={history} nav={nav} cfg={cfg} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
+        {stats && !empty && page === "bingo" && <Bingo stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
 
         {stats && !empty && page === "board" && (
@@ -464,6 +506,9 @@ export default function App() {
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
                     {p.rarestUnlock ? <>Rarest: {p.rarestUnlock.achName} ({p.rarestUnlock.pct.toFixed(2)}%)</> : "No unlocks yet"}
                   </div>
+                  {boardMode === "all" && (
+                    <div style={{ fontSize: 11, color: "var(--faint)", marginTop: 3 }}>{leverLine(i)}</div>
+                  )}
                 </div>
                 {[
                   ["Perfects", p.perfects, "var(--ink-strong)"],

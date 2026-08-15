@@ -235,7 +235,7 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
                 {offenders.map((o) => (
                   <div key={o.appid} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
                     <span style={{ width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
-                      onClick={() => nav("game", { appid: o.appid })}>{o.name}</span>
+                      onClick={() => nav(`/game/${o.appid}`)}>{o.name}</span>
                     <div style={{ flex: 1, height: 9, background: "var(--chip)", borderRadius: 5, overflow: "hidden" }}>
                       <div style={{ width: `${(o.remaining / maxOffender) * 100}%`, height: "100%", background: "var(--err-border)", borderRadius: 5 }} />
                     </div>
@@ -251,7 +251,7 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
                 {shelf.slice(0, 8).map((g) => (
                   <div key={g.appid} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
                     <span style={{ width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
-                      onClick={() => nav("game", { appid: g.appid })}>{g.name}</span>
+                      onClick={() => nav(`/game/${g.appid}`)}>{g.name}</span>
                     <span style={{ flex: 1, color: "var(--faint)" }}>
                       {g.last === 0 && g.minutes === 0 ? "🧊 never launched"
                         : `${g.minutes ? fmtMin(g.minutes) + " played" : "barely touched"} · ${g.last ? ago(g.last) : "long ago"}`}
@@ -274,7 +274,7 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
                   return (
                     <div key={r.appid} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
                       <span style={{ width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
-                        onClick={() => nav("game", { appid: r.appid })}>{r.name}</span>
+                        onClick={() => nav(`/game/${r.appid}`)}>{r.name}</span>
                       <span style={{ flex: 1 }}><PctBar pct={p?.pct ?? 0} /></span>
                       <span style={{ width: 60, textAlign: "right", color: "var(--muted)" }}>{p?.pct ?? 0}%</span>
                     </div>
