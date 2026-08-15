@@ -94,11 +94,23 @@ export default async function handler(req, res) {
   for (const g of data.games) {
     for (const sid of steamids) {
       const unlocks = g.players[sid];
-      if (!unlocks) continue;
+      // LIBRARY SCOPE: a row per game the member OWNS (their
+      // GetOwnedGames playtime map, fetched with every profile pass),
+      // even with no achievement data yet — owned-but-untouched games
+      // write unlocked=0 so snapshot_daily's sum(total) becomes each
+      // member's library size, which is the Burndown chart's honest
+      // denominator. The || keeps two safety nets: free games Steam
+      // doesn't report as owned until first launch, and runs where the
+      // ownership fetch failed (empty map = unknown, not "owns
+      // nothing") degrade to the old started-games behavior instead of
+      // dropping the member's rows for the day.
+      const pt = data.profiles?.[sid]?.playtime ?? {};
+      const owned = Object.keys(pt).length > 0 && pt[g.appid] !== undefined;
+      if (!unlocks && !owned) continue;
       rows.push({
         day: today, steamid: sid, appid: g.appid,
-        unlocked: unlocks.length, total: g.ach.length,
-        complete: unlocks.length === g.ach.length && g.ach.length > 0,
+        unlocked: unlocks?.length ?? 0, total: g.ach.length,
+        complete: !!unlocks && unlocks.length === g.ach.length && g.ach.length > 0,
       });
     }
   }
