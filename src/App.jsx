@@ -607,6 +607,25 @@ export default function App() {
             </div>
 
             <div className="panel" style={S.panel}>
+              <div style={{ ...S.label, marginBottom: 12 }}>Backups</div>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 0 }}>
+                Free-tier Supabase keeps <b>no automatic backups</b> — the club's data is one copy until you
+                download another. <b>Core</b> is the irreplaceable part (roster, game list, settings, contracts,
+                century picks, bingo, everything the club decided); grab it after big curation sessions.
+                <b> History</b> is the nightly snapshot rows, chunked by month.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <a style={S.btn} href="/api/backup" download>Download core</a>
+                <a style={S.btnGhost} href={`/api/backup?snapshots=${new Date().toISOString().slice(0, 7)}`} download>
+                  This month's history
+                </a>
+                <a style={S.btnGhost} href="/api/backup?manifest=1" target="_blank" rel="noreferrer">
+                  All months…
+                </a>
+              </div>
+            </div>
+
+            <div className="panel" style={S.panel}>
               <div style={{ ...S.label, marginBottom: 12 }}>Members</div>
               {meta.members.map((m) => (
                 <div key={m.steamid} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
