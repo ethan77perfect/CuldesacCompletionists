@@ -130,6 +130,27 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
   }, [spotGames, stats, spot]);
   const quickWins = useMemo(() =>
     stats.recs.filter((r) => r.sid === spot).slice(0, 5), [stats, spot]);
+  // Low-hanging fruit: the 20 individually-easiest remaining achievements
+  // across the spotlight member's whole mountain — untouched games very
+  // much included (their 92% "finish the tutorial" is exactly the point).
+  // "Easiest" = highest global unlock %; provisional ⏳ (0.0%) is unknown,
+  // not easy, so it's excluded. Note the honest irony: rarity weighting
+  // means the easiest achievements pay the least — but they're free.
+  const fruit = useMemo(() => {
+    const out = [];
+    for (const g of spotGames) {
+      const p = g.players[spot];
+      if (p?.complete) continue;
+      const have = new Set((p?.unlocks ?? []).map((u) => u.id));
+      for (const a of g.ach) {
+        if (a.pct <= 0 || have.has(a.id)) continue;
+        out.push({ appid: g.appid, id: a.id, game: g.name, ach: a.name,
+          pct: a.pct, pts: g.table.per.get(a.id) ?? 0 });
+      }
+    }
+    return out.sort((x, y) => y.pct - x.pct || y.pts - x.pts).slice(0, 20);
+  }, [spotGames, spot]);
+  const fruitPts = fruit.reduce((s, f) => s + f.pts, 0);
   const maxOffender = Math.max(...offenders.map((o) => o.remaining), 1);
 
   return (
@@ -282,6 +303,26 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
                 })}
                 {quickWins.length === 0 && <span style={{ fontSize: 12, color: "var(--muted)" }}>No recommendations — everything's either done or untouched.</span>}
               </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+              Low-hanging fruit — your {fruit.length} easiest remaining achievements
+              {fruit.length > 0 && <> · <b style={{ color: "var(--accent)" }}>{Math.round(fruitPts)} pts</b> sitting right there</>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: "5px 20px" }}>
+              {fruit.map((f) => (
+                <div key={`${f.appid}:${f.id}`} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, minWidth: 0 }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.ach}{" "}
+                    <span style={{ color: "var(--faint)", cursor: "pointer" }} onClick={() => nav(`/game/${f.appid}`)}>· {f.game}</span>
+                  </span>
+                  <span style={{ flexShrink: 0, color: "var(--muted)" }}>
+                    {f.pct.toFixed(0)}% have it · {f.pts < 10 ? f.pts.toFixed(1) : Math.round(f.pts)} pts
+                  </span>
+                </div>
+              ))}
+              {fruit.length === 0 && <span style={{ fontSize: 12, color: "var(--accent)" }}>The low branches are bare — everything left takes real climbing. 🍃</span>}
             </div>
           </div>
         </div>
