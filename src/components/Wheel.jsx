@@ -47,6 +47,10 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         color: SLICE_COLORS[i % SLICE_COLORS.length],
       }));
     }
+    // personal + casual share the same pool (this member's incomplete
+    // games, owned/century filters apply); they differ only in WEIGHT.
+    // Personal favors near-finishes (it feeds a contract); casual is
+    // equal odds — serendipity, untouched games very much included.
     const playtime = stats.profilesPlaytime?.[spinner] ?? {};
     const ownershipKnown = Object.keys(playtime).length > 0;   // empty = private profile / no data
     const centurySet = new Set((meta.century ?? []).filter((c) => c.steamid === spinner).map((c) => Number(c.appid)));
@@ -57,7 +61,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
       .map((g, i) => {
         const rec = stats.recs.find((r) => r.sid === spinner && r.appid === g.appid);
         return { appid: g.appid, name: g.name, diff: g.diff,
-          weight: rec ? 100 / rec.effort : 0.5,
+          weight: mode === "casual" ? 1 : (rec ? 100 / rec.effort : 0.5),
           color: SLICE_COLORS[i % SLICE_COLORS.length] };
       });
   }, [mode, spinner, stats, ownedOnly, centuryOnly, meta.century]);
@@ -163,7 +167,10 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
   // one active contract per person: spinner is bound until they beat it or Monday clears it.
   // Same rule for the club: one live bounty at a time — beat it or Monday clears it.
-  const boundBy = mode === "personal"
+  // Casual mode is NEVER bound — a live contract gates scoring spins,
+  // not "what do I feel like playing tonight."
+  const boundBy = mode === "casual" ? null
+    : mode === "personal"
     ? stats.contractView.find((c) => c.steamid === spinner && c.status === "active")
     : activeBounty ?? null;
   const fmtExpiry = (t) => new Date(t * 1000).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
@@ -177,11 +184,11 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div className="panel" style={{ ...S.panel, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        {[["personal", "Personal wheel · 1.5×"], ["public", "Public bounty · 2×"]].map(([k, l]) => (
+        {[["personal", "Personal wheel · 1.5×"], ["public", "Public bounty · 2×"], ["casual", "🎲 Right now · no stakes"]].map(([k, l]) => (
           <button key={k} style={{ ...S.btnGhost, ...(mode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
             onClick={() => { setMode(k); setResult(null); }}>{l}</button>
         ))}
-        {mode === "personal" && (() => {
+        {mode !== "public" && (() => {
           const ownershipKnown = Object.keys(stats.profilesPlaytime?.[spinner] ?? {}).length > 0;
           const hasCentury = (meta.century ?? []).some((c) => c.steamid === spinner);
           return (
@@ -206,7 +213,9 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           );
         })()}
         <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: "auto" }}>
-          {mode === "personal" ? "Fatter slices = closer to 100%" : `${slices.length} games, equal odds`}
+          {mode === "personal" ? "Fatter slices = closer to 100%"
+            : mode === "casual" ? "Equal odds, zero stakes — spin until something sparks"
+            : `${slices.length} games, equal odds`}
         </span>
       </div>
 
@@ -286,7 +295,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
                     fontSize: off === 0 ? 20 : 13,
                     color: off === 0 ? "var(--accent)" : "var(--muted)",
                   }}>{s.name}</span>
-                  {off === 0 && <span style={{ marginLeft: "auto", flexShrink: 0 }}><Dial value={s.diff} size={30} /></span>}
+                  {off === 0 && <span style={{ marginLeft: "auto", flexShrink: 0 }}><Dial value={s.diff} size={40} /></span>}
                 </div>
               );
             })}
@@ -306,7 +315,20 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           {!result && !spinning && !boundBy && drumRows.length > 0 && (
             <p style={{ color: "var(--muted)", fontSize: 13 }}>Hit the hub to spin.</p>
           )}
-          {result && !boundBy && (
+          {result && mode === "casual" && (
+            <div>
+              <div style={{ ...S.label, marginBottom: 6 }}>Tonight's game is</div>
+              <div style={{ ...S.display, fontSize: 22, fontWeight: 700, color: "var(--accent)", marginBottom: 10 }}>{result.name}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={S.btn} onClick={() => nav(`/game/${result.appid}`)}>Open the game page</button>
+                <button style={S.btnGhost} onClick={() => { setResult(null); }}>Nah — spin again</button>
+              </div>
+              <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 10 }}>
+                No contract, no multiplier, no Monday deadline — this wheel just wants you to have a nice evening.
+              </p>
+            </div>
+          )}
+          {result && !boundBy && mode !== "casual" && (
             <div>
               <div style={{ ...S.label, marginBottom: 6 }}>The wheel has chosen</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
