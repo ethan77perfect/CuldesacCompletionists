@@ -829,8 +829,6 @@ export default function App() {
               <div style={{ ...S.label, marginBottom: 16 }}>Scoring rules</div>
               <Slider label="100% completion bonus" value={cfg.bonus} min={0} max={0.8} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, bonus: v })} fmt={(v) => `${Math.round(v * 100)}% of pool`} />
-              <Slider label="Points per hour of completion time" value={cfg.ptsPerHour ?? 10} min={5} max={25} step={1}
-                onChange={(v) => setCfg({ ...cfg, ptsPerHour: v })} fmt={(v) => `${v} pts/hr`} />
               <Slider label="First blood bonus 🩸" value={cfg.firstBloodPct ?? 0.1} min={0} max={0.25} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, firstBloodPct: v })} fmt={(v) => `+${Math.round(v * 100)}%`} />
 

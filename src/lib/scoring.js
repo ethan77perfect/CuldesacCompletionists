@@ -11,33 +11,38 @@
 //      (Settings → Tracked games). This is the one human input.
 //   2. DIFFICULTY IS GRADED ON A CURVE. A game's difficulty is its
 //      percentile among all rated club games, pushed through the
-//      inverse normal CDF and centered on 5.5. That forces a bell
+//      inverse normal CDF, centered on 5, floored at 0.5. That forces a bell
 //      shape no matter how skewed the raw hours are: the mid-pack
 //      clusters at 5–6, and 9s/10s are rare BY CONSTRUCTION. The
 //      curve re-flows every time a game is added or re-timed —
 //      every game's percentile moves, so every difficulty can.
 //      With ~80 rated games, expect a couple of 1s and 10s, a
 //      handful of 2s and 9s, and a big hump in the middle.
-//   3. POINTS COME FROM TIME. pool = hours × ptsPerHour (a club
-//      rule, default 10 — one point per six minutes of median
-//      effort). The pool is then divided among the game's
+//   3. POINTS COME FROM THE CURVE. pool = difficulty × 100 — a
+//      10/10 game is worth 1000 points, the same currency custom
+//      challenges pay. The pool is then divided among the game's
 //      achievements by global rarity exactly as before (inverse-
 //      sqrt weighting), and the 100% bonus is still a % slice of
 //      the pool. Rarity decides WHERE the points sit inside a
-//      game; hours decide HOW MANY points the game is worth.
+//      game; the curve decides HOW MANY points the game is worth.
 //
 // Games with no hours yet are UNRATED: difficulty null (UI shows ⏱),
-// and their pool uses a neutral fallback (the median hours of rated
-// games, or cfg.defaultHours before any exist) so the site keeps
-// working while the data gets entered. Enter the hours and both
-// numbers snap to truth on the next load.
+// and their pool stands in at the curve's center (5 × 100 = 500) so
+// the site keeps working while the data gets entered. Enter the
+// hours and both numbers snap to truth on the next load.
 //
 // Everything reprices retroactively on every load — that's the
 // site's compute-from-source design, and it's what makes the curve
 // "fluid" for free.
 // ---------------------------------------------------------------
 
-export const DEFAULT_SETTINGS = { bonus: 0.4, ptsPerHour: 10, defaultHours: 20 };
+export const DEFAULT_SETTINGS = { bonus: 0.4 };
+
+// A 10/10 game is worth 1000 points — deliberately the same currency
+// as custom challenges (difficulty × 100), so games and challenges
+// price in one economy. Not a knob: the scale anchors everything.
+const PTS_PER_DIFF = 100;
+const NEUTRAL_DIFF = 5;   // curve center — pool stand-in for unrated games
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const round1 = (v) => Math.round(v * 10) / 10;
@@ -83,7 +88,7 @@ function invNorm(p) {
           ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
 }
 
-const SCALE = 2.0;   // 5.5 ± 2σ: ~38% of games land at 5–6, ~7% at 9–10
+const SCALE = 2.0;   // 5 ± 2σ on a 0–10 span: mid-pack clusters at 4–6, 9s and 10s stay rare
 
 /**
  * Build the club's difficulty curve from every rated game's hours.
@@ -104,26 +109,31 @@ export function buildDifficultyCurve(allHours) {
     }
     const rank = below + (equal + 1) / 2;          // midrank; a new value sits between neighbors
     const p = rank / (rated.length + 1);           // strictly inside (0,1) → invNorm-safe
-    return clamp(round1(5.5 + SCALE * invNorm(p)), 1, 10);
+    return clamp(round1(5 + SCALE * invNorm(p)), 0.5, 10);   // hard floor: even the club's easiest game is worth 50 pts
   };
 }
 
 /**
  * Point value of each achievement in a game, plus the 100% bonus.
- * opts.hours         — this game's median completion hours (null = unrated)
- * opts.curve         — mapper from buildDifficultyCurve (club-wide)
- * opts.fallbackHours — neutral pool stand-in for unrated games
+ * opts.hours — this game's median completion hours (null = unrated)
+ * opts.curve — mapper from buildDifficultyCurve (club-wide)
+ *
+ * pool = difficulty × 100. The curve is the whole economy: a 10/10
+ * game is worth 1000 points, a 5.0 worth 500, and an unrated game
+ * stands in at the curve's center (500) until its hours land. The
+ * curve is floored at 0.5, so no game can ever be worth less than
+ * 50 points — the participation trophy is structural.
  */
-export function pointTable(ach, cfg, { hours = null, curve = () => null, fallbackHours = null } = {}) {
+export function pointTable(ach, cfg, { hours = null, curve = () => null } = {}) {
   ach = effectiveAch(ach);
   const rated = Number.isFinite(hours) && hours > 0;
-  const effHours = rated ? hours : (fallbackHours ?? cfg.defaultHours ?? 20);
-  const pool = Math.round(effHours * (cfg.ptsPerHour ?? 10));
+  const diff = curve(hours);                                   // null when unrated
+  const pool = Math.round((diff ?? NEUTRAL_DIFF) * PTS_PER_DIFF);
   const earnable = pool * (1 - cfg.bonus);
   const weights = ach.map((a) => 1 / Math.sqrt(Math.max(a.pct, FLOOR)));
   const totalW = weights.reduce((s, w) => s + w, 0) || 1;
   const per = new Map(ach.map((a, i) => [a.id, (weights[i] / totalW) * earnable]));
-  return { diff: curve(hours), pool, per, bonusPts: pool * cfg.bonus, hours: rated ? hours : null, unrated: !rated };
+  return { diff, pool, per, bonusPts: pool * cfg.bonus, hours: rated ? hours : null, unrated: !rated };
 }
 
 /** Score one player's progress in one game. */
