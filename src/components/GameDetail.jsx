@@ -32,7 +32,9 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
           <div style={{ ...S.display, fontSize: 28, fontWeight: 700, color: "var(--ink-strong)" }}>{g.name}</div>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
             {g.ach.length} achievements · pool {g.pool} pts · rarest {Math.min(...g.ach.map((a) => a.pct)).toFixed(2)}%
-            {g.adjust !== 0 && <span style={{ color: "var(--accent)" }}> · club adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
+            {g.unrated
+              ? <span style={{ color: "var(--accent)" }}> · ⏱ no time data — add median hours in Settings</span>
+              : <span> · {g.hours}h median</span>}
             {g.race && <span> · 🏁 race</span>}
           </div>
         </div>

@@ -5,7 +5,7 @@
 // recommendations, races, challenge standings, badges, timeline.
 // ---------------------------------------------------------------
 
-import { difficultyFromRarity, pointTable } from "./scoring.js";
+import { pointTable, buildDifficultyCurve } from "./scoring.js";
 
 const DAY = 86400;
 const monthKey = (t) => {
@@ -56,11 +56,21 @@ export function buildClubStats(clubData, meta, settings) {
   const pioneerSet = new Set((meta.pioneers ?? []).map((p) => `${p.steamid}|${p.appid}|${p.achid}`));
   const profiles = clubData.profiles ?? {};
 
+  // ---- the difficulty curve: built once from ALL rated games ----
+  // (percentile-based, so it must see the whole set before any single
+  // game can be scored — see scoring.js for the philosophy)
+  const hoursOf = (row) => (row?.hours_median != null && Number(row.hours_median) > 0 ? Number(row.hours_median) : null);
+  const allHours = (meta.games ?? []).map(hoursOf);
+  const curve = buildDifficultyCurve(allHours);
+  const ratedHours = allHours.filter((h) => h != null).sort((x, y) => x - y);
+  const fallbackHours = ratedHours.length
+    ? ratedHours[Math.floor(ratedHours.length / 2)]          // median of rated games
+    : (cfg.defaultHours ?? 20);                               // pre-data-entry neutral
+
   // ---- score every game ----
   const games = clubData.games.map((raw) => {
     const db = dbGames[raw.appid] ?? {};
-    const adjust = db.adjust ?? 0;
-    const table = pointTable(raw.ach, cfg, adjust);
+    const table = pointTable(raw.ach, cfg, { hours: hoursOf(db), curve, fallbackHours });
     // keep RAW pcts for display (0 renders as ⏳ Unrated) with a flag
     const achById = Object.fromEntries(raw.ach.map((a) => [a.id, { ...a, provisional: a.pct <= 0 }]));
     const players = {};
@@ -85,8 +95,9 @@ export function buildClubStats(clubData, meta, settings) {
     return {
       ...raw,
       name: db.name ?? raw.name,
-      adjust, race: db.race ?? false, notes: db.notes ?? "",
-      diff: table.diff, pool: table.pool, table, achById, players,
+      race: db.race ?? false, notes: db.notes ?? "",
+      diff: table.diff, hours: table.hours, unrated: table.unrated,
+      pool: table.pool, table, achById, players,
     };
   });
 
@@ -435,7 +446,7 @@ export function buildClubStats(clubData, meta, settings) {
     return { ...c, gameName: g?.name ?? `App ${c.appid}`, diff: g?.diff, fulfilledBy, status };
   });
   const histogram = Array.from({ length: 10 }, (_, i) => ({
-    diff: i + 1, games: games.filter((g) => g.diff === i + 1).length,
+    diff: i + 1, games: games.filter((g) => g.diff != null && Math.round(g.diff) === i + 1).length,
   }));
   const scatter = events.filter((e) => e.kind === "unlock" && e.t).map((e) => ({
     t: e.t, pct: Math.max(e.pct, 0.05), sid: e.sid, achName: e.achName, gameName: e.gameName,

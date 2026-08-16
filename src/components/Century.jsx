@@ -312,7 +312,7 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                 const owned = ownershipKnown ? playtime[appid] !== undefined : null;
                 const sortNote =
                   sort === "playtime" && playtime[appid] !== undefined ? fmtMin(playtime[appid]) :
-                  sort === "diff" && tracked ? `${trackedById[appid].diff}/10` :
+                  sort === "diff" && tracked ? `${trackedById[appid].diff ?? "⏱"}/10` :
                   sort === "points" ? `${Math.round(ptsByKey.get(`${viewing}|${appid}`) ?? 0)} pts` :
                   sort === "lastplayed" && lastPlayed[appid] ? new Date(lastPlayed[appid] * 1000).toLocaleDateString(undefined, { month: "short", year: "2-digit" }) :
                   sort === "ptspct" && tracked ? `${ptsPct(viewing, appid) ?? 0}% pts` :

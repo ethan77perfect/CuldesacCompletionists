@@ -13,7 +13,7 @@ export default function PlayerPage({ stats, sid, nav }) {
   if (!p) return <p style={{ color: "var(--muted)" }}>Player not found.</p>;
 
   const perfectGames = stats.games.filter((g) => g.players[sid]?.complete)
-    .sort((a, b) => b.diff - a.diff);
+    .sort((a, b) => (b.diff ?? -1) - (a.diff ?? -1));
   const inProgress = stats.recs.filter((r) => r.sid === sid).slice(0, 5);
   const hours = Math.round(p.playtimeMin / 60);
 

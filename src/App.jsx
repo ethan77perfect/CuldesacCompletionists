@@ -324,6 +324,7 @@ export default function App() {
   const empty = meta && (!meta.members.length || !meta.games.length);
   const [newMember, setNewMember] = useState({ idOrVanity: "", color: "#7FB4E6" });
   const [newGame, setNewGame] = useState("");
+  const [gameSort, setGameSort] = useState("missing");   // Settings tracked-games sort
 
   const board = stats
     ? (boardMode === "month" ? stats.monthBoard : boardMode === "contracts" ? stats.contractBoard : stats.board)
@@ -622,13 +623,13 @@ export default function App() {
                 .filter((g) => g.name.toLowerCase().includes(libSearch.toLowerCase()))
                 .sort((a, b) => {
                   if (libSort === "name") return a.name.localeCompare(b.name);
-                  if (libSort === "easy") return a.diff - b.diff;
+                  if (libSort === "easy") return (a.diff ?? 99) - (b.diff ?? 99);
                   if (libSort === "active") {
                     const la = Math.max(0, ...Object.values(a.players).map((r) => r.lastUnlock));
                     const lb = Math.max(0, ...Object.values(b.players).map((r) => r.lastUnlock));
                     return lb - la;
                   }
-                  return b.diff - a.diff;
+                  return (b.diff ?? -1) - (a.diff ?? -1);
                 })
                 .map((g) => (
                   <div key={g.appid} className="card-lift panel" style={{ ...S.panel, cursor: "pointer" }} onClick={() => nav(`/game/${g.appid}`)}>
@@ -640,7 +641,9 @@ export default function App() {
                         </div>
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
                           {g.ach.length} achievements · pool {g.pool} pts
-                          {g.adjust !== 0 && <span style={{ color: "var(--accent)" }}> · adj {g.adjust > 0 ? `+${g.adjust}` : g.adjust}</span>}
+                          {g.unrated
+                            ? <span style={{ color: "var(--accent)" }}> · ⏱ needs time data</span>
+                            : <span> · {g.hours}h</span>}
                         </div>
                       </div>
                     </div>
@@ -723,26 +726,56 @@ export default function App() {
             </div>
 
             <div className="panel" style={S.panel}>
-              <div style={{ ...S.label, marginBottom: 12 }}>Tracked games ({meta.games.length})</div>
-              {meta.games.length > 5 && (
-                <input style={{ ...S.input, marginBottom: 10 }} placeholder="Search games…"
-                  value={gameFilter} onChange={(e) => setGameFilter(e.target.value)} />
-              )}
-              <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
-                {meta.games
+              {(() => { const missing = meta.games.filter((g) => g.hours_median == null).length; return (
+                <div style={{ ...S.label, marginBottom: 12 }}>
+                  Tracked games ({meta.games.length}
+                  {missing > 0 && <span style={{ color: "var(--accent)" }}> · ⏱ {missing} need time</span>})
+                </div>
+              ); })()}
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                {meta.games.length > 5 && (
+                  <input style={{ ...S.input, flex: 1 }} placeholder="Search games…"
+                    value={gameFilter} onChange={(e) => setGameFilter(e.target.value)} />
+                )}
+                <select value={gameSort} onChange={(e) => setGameSort(e.target.value)} style={{ ...S.input, width: "auto" }}
+                  aria-label="Sort tracked games">
+                  <option value="missing">⏱ Needs time first</option>
+                  <option value="name">A–Z</option>
+                  <option value="hours">Longest first</option>
+                  <option value="shortest">Shortest first</option>
+                </select>
+              </div>
+              <div style={{ maxHeight: 340, overflowY: "auto", paddingRight: 4 }}>
+                {[...meta.games]
                   .filter((g) => (g.name ?? "").toLowerCase().includes(gameFilter.toLowerCase()))
+                  .sort((a, b) => {
+                    const an = (a.name ?? "").toLowerCase(), bn = (b.name ?? "").toLowerCase();
+                    if (gameSort === "name") return an.localeCompare(bn);
+                    if (gameSort === "hours") return (Number(b.hours_median) || -1) - (Number(a.hours_median) || -1) || an.localeCompare(bn);
+                    if (gameSort === "shortest") return (Number(a.hours_median) || 9e9) - (Number(b.hours_median) || 9e9) || an.localeCompare(bn);
+                    // "missing": unrated first (that's the to-do list), then A–Z within each group
+                    return (a.hours_median == null ? 0 : 1) - (b.hours_median == null ? 0 : 1) || an.localeCompare(bn);
+                  })
                   .map((g) => (
                     <div key={g.appid} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <span style={{ flex: 1, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name ?? g.appid}</span>
-                      <span title="Club difficulty adjustment" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) <= -3} aria-label={`Lower ${g.name} difficulty`}
-                          onClick={() => mutate("setAdjust", { appid: g.appid, adjust: (g.adjust ?? 0) - 1 }, (j) => `${g.name} adjustment: ${j.adjust >= 0 ? "+" : ""}${j.adjust}`)}>−</button>
-                        <span style={{ fontSize: 12, fontWeight: 700, width: 24, textAlign: "center", color: (g.adjust ?? 0) !== 0 ? "var(--accent)" : "var(--faint)" }}>
-                          {(g.adjust ?? 0) > 0 ? `+${g.adjust}` : (g.adjust ?? 0)}
-                        </span>
-                        <button style={S.btnGhost} disabled={busy || (g.adjust ?? 0) >= 3} aria-label={`Raise ${g.name} difficulty`}
-                          onClick={() => mutate("setAdjust", { appid: g.appid, adjust: (g.adjust ?? 0) + 1 }, (j) => `${g.name} adjustment: ${j.adjust >= 0 ? "+" : ""}${j.adjust}`)}>+</button>
-                      </span>
+                      {g.hours_median == null && <span title="Needs median hours-to-complete" style={{ flexShrink: 0 }}>⏱</span>}
+                      <span style={{ flex: 1, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        color: g.hours_median == null ? "var(--accent)" : "var(--ink)" }}>{g.name ?? g.appid}</span>
+                      <input
+                        key={`${g.appid}:${g.hours_median ?? ""}`}
+                        type="number" min="0.5" step="0.5" placeholder="hrs"
+                        defaultValue={g.hours_median ?? ""}
+                        aria-label={`${g.name} median hours to complete`}
+                        style={{ ...S.input, width: 74, padding: "6px 8px" }}
+                        disabled={busy}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          const cur = g.hours_median == null ? "" : String(g.hours_median);
+                          if (v === cur) return;   // unchanged — no write
+                          mutate("setHours", { appid: g.appid, hours: v === "" ? null : Number(v) },
+                            (j) => j.hours == null ? `${g.name}: time cleared (⏱ unrated)` : `${g.name}: ${j.hours}h median`);
+                        }} />
                       <button style={S.btnGhost} disabled={busy}
                         onClick={() => mutate("removeGame", { appid: g.appid }, () => `${g.name} removed`)}>Remove</button>
                     </div>
@@ -796,10 +829,8 @@ export default function App() {
               <div style={{ ...S.label, marginBottom: 16 }}>Scoring rules</div>
               <Slider label="100% completion bonus" value={cfg.bonus} min={0} max={0.8} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, bonus: v })} fmt={(v) => `${Math.round(v * 100)}% of pool`} />
-              <Slider label="Rarity steepness" value={cfg.steepness} min={2} max={5} step={0.1}
-                onChange={(v) => setCfg({ ...cfg, steepness: v })} fmt={(v) => v.toFixed(1)} />
-              <Slider label="Rarest achievement weight" value={cfg.rarestWeight} min={0.3} max={1} step={0.05}
-                onChange={(v) => setCfg({ ...cfg, rarestWeight: v })} fmt={(v) => `${Math.round(v * 100)}%`} />
+              <Slider label="Points per hour of completion time" value={cfg.ptsPerHour ?? 10} min={5} max={25} step={1}
+                onChange={(v) => setCfg({ ...cfg, ptsPerHour: v })} fmt={(v) => `${v} pts/hr`} />
               <Slider label="First blood bonus 🩸" value={cfg.firstBloodPct ?? 0.1} min={0} max={0.25} step={0.05}
                 onChange={(v) => setCfg({ ...cfg, firstBloodPct: v })} fmt={(v) => `+${Math.round(v * 100)}%`} />
 

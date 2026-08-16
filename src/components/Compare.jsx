@@ -30,7 +30,7 @@ export default function Compare({ stats, meta, nav }) {
       lead = ra.lastUnlock < rb.lastUnlock ? "a" : "b"; // both perfect: earlier finish wins
     if (lead === "a") winsA++; if (lead === "b") winsB++;
     return { g, ra, rb, lead };
-  }).sort((x, y) => y.g.diff - x.g.diff);
+  }).sort((x, y) => (y.g.diff ?? -1) - (x.g.diff ?? -1));
 
   const gap = gapGame ? rows.find((r) => r.g.appid === gapGame) : null;
   const sel = (v, set) => (

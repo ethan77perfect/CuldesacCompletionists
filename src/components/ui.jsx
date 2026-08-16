@@ -49,11 +49,12 @@ export function Dial({ value, size = 44 }) {
     );
   }
   return (
-    <svg width={size} height={size} style={{ flexShrink: 0 }} aria-label={`Difficulty ${value} of 10`}>
+    <svg width={size} height={size} style={{ flexShrink: 0 }}
+      aria-label={value == null ? "Difficulty not rated yet — needs median hours" : `Difficulty ${value} of 10`}>
       {notches}
-      <text x={cx} y={cy + 5} textAnchor="middle" fontSize="14"
-        style={{ fill: `color-mix(in srgb, ${diffColor(value)} calc(100% - var(--sem-darken, 0%)), #1A1A1A)` }}
-        fontWeight="700" fontFamily="'Barlow Condensed', sans-serif">{value}</text>
+      <text x={cx} y={cy + 5} textAnchor="middle" fontSize={value == null ? "12" : "14"}
+        style={{ fill: value == null ? "var(--faint)" : `color-mix(in srgb, ${diffColor(value)} calc(100% - var(--sem-darken, 0%)), #1A1A1A)` }}
+        fontWeight="700" fontFamily="'Barlow Condensed', sans-serif">{value == null ? "⏱" : value}</text>
     </svg>
   );
 }

@@ -2,7 +2,7 @@
 // /api/db v2.0 — Supabase storage: roster, games, settings, backlog.
 //   GET  /api/db → { members, games, settings, backlog }
 //   POST /api/db { op, clubKey, ... } → mutations (club key required)
-// Ops: addMember, removeMember, addGame, removeGame, setAdjust,
+// Ops: addMember, removeMember, addGame, removeGame, setHours,
 //      toggleRace, setNotes, saveSettings,
 //      proposeBacklog, voteBacklog, removeBacklog, promoteBacklog
 // ---------------------------------------------------------------
@@ -147,11 +147,18 @@ export default async function handler(req, res) {
         if (error) return fail(500, error.message);
         return res.status(200).json({ ok: true });
       }
-      case "setAdjust": {
-        const adjust = Math.max(-3, Math.min(3, parseInt(body.adjust, 10) || 0));
-        const { error } = await supabase.from("games").update({ adjust }).eq("appid", body.appid);
-        if (error) return fail(500, error.message);
-        return res.status(200).json({ ok: true, adjust });
+      case "setHours": {
+        // Median hours-to-complete: the ONE human input the v2 scoring
+        // engine needs. null clears it (game returns to ⏱ unrated).
+        const raw = body.hours;
+        const hours = raw === null || raw === "" || raw === undefined
+          ? null
+          : Math.max(0.1, Math.min(2000, Number(raw)));
+        if (hours !== null && !Number.isFinite(hours))
+          return fail(400, "hours must be a number (or null to clear)");
+        const { error } = await supabase.from("games").update({ hours_median: hours }).eq("appid", body.appid);
+        if (error) return fail(500, `${error.message} — run supabase/migration-v10.sql?`);
+        return res.status(200).json({ ok: true, hours });
       }
       case "toggleRace": {
         const { error } = await supabase.from("games").update({ race: Boolean(body.race) }).eq("appid", body.appid);
