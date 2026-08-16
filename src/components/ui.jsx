@@ -38,6 +38,13 @@ export const S = {
 export function Dial({ value, size = 44 }) {
   const notches = [];
   const cx = size / 2, cy = size / 2, rO = size / 2 - 2, rI = size / 2 - 9;
+  // Font scales with the dial AND the label: "8.3" is three glyphs where
+  // the old integer scale assumed one, and the 14px hardcode overflowed
+  // small dials entirely. Dial sizes are tuned per layout (30–56), so we
+  // shrink the text to fit rather than inflating circles.
+  const label = value == null ? "⏱" : String(value);
+  const scale = value == null ? 0.28 : label.length >= 3 ? 0.26 : 0.32;
+  const fs = Math.max(9, Math.min(17, Math.round(size * scale)));
   for (let i = 0; i < 10; i++) {
     const a = Math.PI * (1.25 - (1.5 * i) / 9);
     notches.push(
@@ -52,9 +59,9 @@ export function Dial({ value, size = 44 }) {
     <svg width={size} height={size} style={{ flexShrink: 0 }}
       aria-label={value == null ? "Difficulty not rated yet — needs median hours" : `Difficulty ${value} of 10`}>
       {notches}
-      <text x={cx} y={cy + 5} textAnchor="middle" fontSize={value == null ? "12" : "14"}
+      <text x={cx} y={cy + fs * 0.36} textAnchor="middle" fontSize={fs}
         style={{ fill: value == null ? "var(--faint)" : `color-mix(in srgb, ${diffColor(value)} calc(100% - var(--sem-darken, 0%)), #1A1A1A)` }}
-        fontWeight="700" fontFamily="'Barlow Condensed', sans-serif">{value == null ? "⏱" : value}</text>
+        fontWeight="700" fontFamily="'Barlow Condensed', sans-serif">{label}</text>
     </svg>
   );
 }
