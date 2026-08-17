@@ -125,6 +125,21 @@ export default async function handler(req, res) {
         }
         const { error } = await supabase.from("members").upsert({ steamid, name, color: body.color || "#E8B84B" });
         if (error) return fail(500, error.message);
+        // ROSTER CHANGE: the cron's per-game freshness map is member-blind —
+        // a "fresh" game's cached player data predates this member, so the
+        // resumable cron would happily carry them-less data for days. Reset
+        // the map (NOT fetched_at — that timestamp anchors the diff and
+        // rare-unlock windows) so stale-first passes re-crawl the whole
+        // library under the new roster. Best-effort: adding the member must
+        // never fail on a cache hiccup.
+        try {
+          const cache = await supabase.from("snapshot_cache").select("*").eq("id", 1).maybeSingle();
+          if (cache.data?.payload) {
+            await supabase.from("snapshot_cache").upsert({
+              id: 1, payload: { ...cache.data.payload, gameFetchedAt: {} }, fetched_at: cache.data.fetched_at,
+            });
+          }
+        } catch { /* best-effort */ }
         return res.status(200).json({ ok: true, steamid, name });
       }
       case "removeMember": {
