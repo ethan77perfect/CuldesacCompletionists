@@ -55,11 +55,17 @@ export default async function handler(req, res) {
     const auth = req.headers.authorization === `Bearer ${secret}` || req.query.secret === secret;
     if (!auth) return res.status(401).json({ error: "Unauthorized" });
   }
-  // Scheduled trigger (not a manual ?secret= test): only proceed at 10pm club time
+  // Scheduled triggers: BOTH vercel.json slots now run — 10pm club time
+  // is the primary pass, 11pm the catch-up pass. With the per-run game
+  // budget below, two passes cover the whole library nightly; before,
+  // the second trigger was skipped and one oversized pass had to
+  // survive Steam's rate limits alone (at 127 games it usually didn't).
   const isManual = Boolean(req.query.secret);
-  if (!isManual && tzPart("hour") !== "22") {
-    return res.status(200).json({ ok: true, skipped: `not 10pm ${CLUB_TZ} on this trigger` });
+  const hourNow = tzPart("hour");
+  if (!isManual && hourNow !== "22" && hourNow !== "23") {
+    return res.status(200).json({ ok: true, skipped: `not 10/11pm ${CLUB_TZ} on this trigger` });
   }
+  const quiet = req.query.quiet === "1";   // manual repair runs: &quiet=1 skips Discord
   const key = process.env.STEAM_API_KEY;
   if (!key) return res.status(500).json({ error: "STEAM_API_KEY not set" });
 
@@ -79,14 +85,52 @@ export default async function handler(req, res) {
   if (!steamids.length || !appids.length)
     return res.status(200).json({ ok: true, note: "Empty club, nothing to snapshot" });
 
-  // ---- 1. the big fetch ----
-  const data = await fetchClubData(key, steamids, appids, { concurrency: 5 });
+  // ---- 1. the fetch: RESUMABLE. Stale-first, budgeted, merged. ----
+  // One 127-game pass is ~1,500 Steam calls — big enough that a grumpy
+  // Steam evening tripped the all-or-nothing garbage guard night after
+  // night, freezing the cache (the "96 missing games" incident). Now
+  // each run fetches only the GAME_BUDGET stalest games and MERGES the
+  // results into the existing cache: fetched games replace their old
+  // entries, everything else carries over untouched. Partial success
+  // advances the club instead of being thrown away, and any single run
+  // is small enough to finish fast and under the rate limit. Staleness
+  // lives in the payload itself (gameFetchedAt: appid → epoch); games
+  // missing from the cache rank stalest of all. Repair by hand anytime:
+  // /api/cron?secret=...&quiet=1, repeatedly, until staleRemaining: 0.
+  const GAME_BUDGET = 60;   // ≈ 730 calls/run at 10 members — 2 nightly passes cover ~120 games
+  const prevPayload0 = prevCache.data?.payload ?? null;
+  const prevFetchMap = prevPayload0?.gameFetchedAt ?? {};
+  const clubIds = new Set(appids.map(Number));
+  const targets = [...appids]
+    .sort((a, b) => (prevFetchMap[a] ?? 0) - (prevFetchMap[b] ?? 0))
+    .slice(0, GAME_BUDGET);
+  const fetched = await fetchClubData(key, steamids, targets, { concurrency: 5 });
 
-  // ---- 2. never snapshot garbage ----
-  const totalReqs = appids.length * (2 + steamids.length) + steamids.length + 1;
-  if (data.failed > Math.max(10, totalReqs * 0.05)) {
-    return res.status(502).json({ error: `Steam throttled ${data.failed}/${totalReqs} requests — skipped this run` });
+  // ---- 2. never MERGE garbage ----
+  // The guard survives, per-run: a total wipeout or heavy throttling
+  // aborts without writing. But an aborted 60-game run is a skipped
+  // hour, not a lost night — and merge semantics mean a carried-over
+  // game can never be replaced by a worse copy of itself.
+  const totalReqs = targets.length * (2 + steamids.length) + steamids.length + 1;
+  if (!fetched.games.length || fetched.failed > Math.max(10, totalReqs * 0.15)) {
+    return res.status(502).json({ error: `Steam throttled ${fetched.failed}/${totalReqs} requests — skipped this run` });
   }
+
+  // ---- merge: fetched games win, everything else carries over ----
+  const gotIds = new Set(fetched.games.map((g) => Number(g.appid)));
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const gameFetchedAt = { ...prevFetchMap };
+  for (const id of gotIds) gameFetchedAt[id] = nowEpoch;
+  for (const id of Object.keys(gameFetchedAt)) if (!clubIds.has(Number(id))) delete gameFetchedAt[id];
+  const data = {
+    games: [
+      ...fetched.games,
+      ...(prevPayload0?.games ?? []).filter((g) => !gotIds.has(Number(g.appid)) && clubIds.has(Number(g.appid))),
+    ],
+    profiles: { ...(prevPayload0?.profiles ?? {}), ...fetched.profiles },
+    gameFetchedAt,
+    failed: fetched.failed,
+  };
 
   // ---- 3. write cache + snapshot rows ----
   // Club-local date, not UTC: the 10pm Eastern run is 02:00–03:00 UTC
@@ -229,7 +273,7 @@ export default async function handler(req, res) {
   }
   // Monday (club time): contract week report + spin-day call —
   // posts Monday EVENING, wrapping the first day of the fresh week
-  const isMonday = tzPart("weekday") === "Mon";
+  const isMonday = tzPart("weekday") === "Mon" && !isManual && hourNow === "22";
   if (isMonday) {
     const lastWeek = contracts.data?.filter((c) => {
       const epoch = Date.parse(c.accepted_at) / 1000;
@@ -255,10 +299,13 @@ export default async function handler(req, res) {
 
   // ---- 5. Discord ----
   const webhook = process.env.DISCORD_WEBHOOK_URL;
-  if (webhook && embeds.length) await postDiscord(webhook, embeds);
+  if (webhook && embeds.length && !quiet) await postDiscord(webhook, embeds);
 
+  const STALE_AFTER = 20 * 3600;   // "fresh" = fetched within ~a day
+  const staleRemaining = appids.filter((a) => (gameFetchedAt[a] ?? 0) < nowEpoch - STALE_AFTER).length;
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
+    fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun,
     notifications: embeds.length, discord: Boolean(webhook),
   });
