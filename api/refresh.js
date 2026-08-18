@@ -32,12 +32,14 @@
 export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
-import { fetchClubData } from "../lib/steamFetch.js";
+import { fetchClubData, fetchRecentAppids } from "../lib/steamFetch.js";
 import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
 const GAME_BUDGET = 36;          // ≈ 440 Steam calls at 10 members — fast, throttle-safe
-const STALE_AFTER = 6 * 3600;    // games touched within 6h don't refetch
+const STALE_AFTER = 6 * 3600;    // dormant games: touched within 6h don't refetch
+const HOT_STALE = 12 * 60;       // actively-played games go stale in minutes — unlocks surface fast
+const RECENT_EVERY = 5 * 60;     // re-ask Steam "who's playing what" at most every 5 min (1 call/member)
 
 async function postDiscord(webhook, embeds) {
   for (let i = 0; i < embeds.length; i += 10) {
@@ -72,11 +74,31 @@ export default async function handler(req, res) {
   const nowEpoch = Math.floor(Date.now() / 1000);
   let prevRow = cacheRow.data ?? null;
   let prevPayload = prevRow?.payload ?? null;
+
+  // ---- who's actively playing? (cached in the payload, 5-min TTL) ----
+  let recentAppids = prevPayload?.recentAppids ?? [];
+  let recentCheckedAt = prevPayload?.recentCheckedAt ?? 0;
+  let recentUpdated = false;
+  if (nowEpoch - recentCheckedAt >= RECENT_EVERY) {
+    try {
+      recentAppids = await fetchRecentAppids(key, steamids);
+      recentCheckedAt = nowEpoch; recentUpdated = true;
+    } catch { /* keep the stale set — hot games degrade to the slow clock, nothing breaks */ }
+  }
+  const clubIdSet = new Set(appids.map(String));
+  const hotIds = new Set(recentAppids.map(String).filter((a) => clubIdSet.has(a)));
+
   const { targets, staleCount } = computeTargets(prevPayload?.gameFetchedAt ?? {}, appids,
-    { budget: GAME_BUDGET, staleAfterSec: STALE_AFTER, nowEpoch });
+    { budget: GAME_BUDGET, staleAfterSec: STALE_AFTER, nowEpoch, hotIds, hotStaleAfterSec: HOT_STALE });
 
   if (!targets.length) {
-    return res.status(200).json({ ok: true, fresh: true, staleRemaining: 0,
+    // nothing to fetch — but persist a refreshed recent-set so the next
+    // caller inside the TTL doesn't re-ask Steam (best-effort CAS; a
+    // lost race just means someone else wrote something newer)
+    if (recentUpdated && prevRow) {
+      await casWriteCache(db, prevRow, { ...prevPayload, recentAppids, recentCheckedAt });
+    }
+    return res.status(200).json({ ok: true, fresh: true, staleRemaining: 0, hot: hotIds.size,
       payloadFetchedAt: prevRow?.fetched_at ?? null });
   }
 
@@ -90,6 +112,7 @@ export default async function handler(req, res) {
 
   const clubIds = new Set(appids.map(Number));
   let { payload, gotIds } = mergePayload(prevPayload, fetched, clubIds, nowEpoch);
+  payload.recentAppids = recentAppids; payload.recentCheckedAt = recentCheckedAt;
 
   // ---- discoveries: pioneers + announcements, per-game watermarks ----
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
@@ -118,6 +141,7 @@ export default async function handler(req, res) {
     }
     ({ payload } = mergePayload(prevRow?.payload ?? null, fetched, clubIds, nowEpoch));
     payload.announceWatermark = { ...payload.announceWatermark, ...ann.watermark };
+    payload.recentAppids = recentAppids; payload.recentCheckedAt = recentCheckedAt;
     wrote = await casWriteCache(db, prevRow, payload);
   }
 
@@ -132,7 +156,7 @@ export default async function handler(req, res) {
 
   const staleRemaining = Math.max(0, staleCount - gotIds.size);
   return res.status(200).json({
-    ok: true, fetchedGames: gotIds.size, staleRemaining,
+    ok: true, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
   });
 }
