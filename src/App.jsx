@@ -165,109 +165,43 @@ export default function App() {
         }
       } catch { /* no cache yet — fall through to live load */ }
 
-      // DELTA FETCH: games added since last night's cron aren't in the
-      // snapshot — grab JUST those (a handful of appids, cheap and
-      // throttle-safe) and merge, so add-day games never "go cold"
-      // while waiting for the full background refresh or tonight's cron.
-      if (haveCache) {
-        try {
-          const cachedIds = new Set((cachePayload?.games ?? []).map((g) => Number(g.appid)));
-          const missing = metaJson.games.map((g) => Number(g.appid)).filter((a) => !cachedIds.has(a));
-          if (missing.length) {
-            const sidsQ = metaJson.members.map((m) => m.steamid).join(",");
-            let extra = [];
-            for (let i = 0; i < missing.length; i += 12) {
-              for (let attempt = 0; attempt < 2; attempt++) {
-                const r = await fetch(`/api/club?steamids=${sidsQ}&appids=${missing.slice(i, i + 12).join(",")}&profiles=0`);
-                const j = await r.json();
-                if (r.ok && (j.games ?? []).length) { extra = extra.concat(j.games); break; }
-                await sleep(2000);
-              }
-            }
-            if (extra.length && fresh()) {
-              setClubData((cur) => ({
-                games: [...(cur?.games ?? []).filter((g) => !extra.some((e) => e.appid === g.appid)), ...extra],
-                profiles: cur?.profiles ?? {},
-              }));
-            }
-          }
-        } catch { /* delta is best-effort; the full refresh still runs */ }
-      }
-
       // history chart data (non-critical; ignore failures)
       fetch("/api/history").then((r) => r.json()).then((j) => fresh() && setHistory(j.rows ?? [])).catch(() => {});
 
-      // THEN: live refresh in small batches so big clubs don't trip Steam rate limits.
-      const sids = metaJson.members.map((m) => m.steamid).join(",");
-      const appids = metaJson.games.map((g) => g.appid);
-      const BATCH = 12;
-      const chunks = [];
-      for (let i = 0; i < appids.length; i += BATCH) chunks.push(appids.slice(i, i + BATCH));
-
-      let games = [], profiles = {};
-      // did we already have a complete dataset on screen? Then NEVER
-      // replace it with a partial one — old-but-complete beats
-      // new-but-partial every time. Progressive rendering is for cold
-      // starts only (nothing → something).
-      const hadData = Boolean(clubData?.games?.length);
-      let failedTotal = 0;
-      try {
-      for (let ci = 0; ci < chunks.length; ci++) {
-        if (!fresh()) return;   // a newer load has taken over — abandon this one
-        if (!haveCache) setLoadProgress({ done: ci, total: chunks.length });
-        const url = `/api/club?steamids=${sids}&appids=${chunks[ci].join(",")}&profiles=${ci === 0 ? 1 : 0}`;
-        let j = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const r = await fetch(url);
-            const body = await r.json();
-            if (!r.ok) throw new Error(body.error);
-            j = body;
-            if (!j.failed) break;          // clean batch
-          } catch (e) {
-            if (attempt === 2) throw e;    // hard failures retry too, not just throttles
-          }
-          await sleep(2500 * (attempt + 1)); // cool off, retry batch
-        }
-        games = games.concat(j.games);
-        failedTotal += j?.failed ?? 0;
-        Object.assign(profiles, j.profiles ?? {});
-        // with a cache on screen, swap in live data only once it's COMPLETE —
-        // partial live data replacing a full snapshot would look like regression
-        if (!haveCache && !hadData && fresh()) setClubData({ games: [...games], profiles: { ...profiles } });
-      }
-      if (!fresh()) return;
-      // GARBAGE GUARD (the frontend twin of the cron's "never snapshot
-      // garbage"): a refresh that "completed" but lost a big share of
-      // the library to throttling must NOT replace good data. Finishing
-      // the chunks isn't completeness — bringing the games back is.
-      const expected = metaJson.games.length;
-      if (games.length < Math.ceil(expected * 0.9)) {
-        throw new Error(`Steam only returned ${games.length}/${expected} games (heavy throttling)`);
-      }
-      // PER-GAME CARRY-FORWARD: the guard above catches catastrophe, but
-      // a harvest can still be short a few throttled games. Those keep
-      // their previous data (from the snapshot or the last good refresh)
-      // instead of flickering to "untracked" — the never-replace-better-
-      // with-worse rule, applied per game. metaIds keeps genuinely
-      // removed games from being resurrected.
-      const metaIds = new Set(metaJson.games.map((g) => Number(g.appid)));
-      setClubData((cur) => {
-        const have = new Set(games.map((g) => Number(g.appid)));
-        const carried = (cur?.games ?? []).filter((g) => !have.has(Number(g.appid)) && metaIds.has(Number(g.appid)));
-        return { games: [...games, ...carried], profiles: { ...(cur?.profiles ?? {}), ...profiles } };
-      });
-      setDataAsOf(null);
-      setLoadProgress(null);
-      setRefreshFailed(false);
-      } catch (chunkErr) {
-        if (!haveCache && !hadData) throw chunkErr;   // nothing on screen → surface the real error
-        // something complete is on screen (snapshot or previous live
-        // data): keep it and say what happened instead of degrading
+      // READ-THROUGH REFRESH: the server fetches whatever's stale,
+      // persists it to the shared cache, and hands back the merged
+      // payload — this little loop is the entire live layer now. A
+      // fresh cache costs one cheap no-op call; a roster or game
+      // change costs a few rounds while the server crawls the stale
+      // slice ONCE, for everyone. All the machinery this replaced
+      // (delta fetch, chunked retries, per-game carry-forward, the
+      // garbage guard) lives server-side in lib/clubSync.js.
+      let paintedAnything = haveCache;
+      let firstStale = null;
+      for (let round = 0; round < 8; round++) {
         if (!fresh()) return;
-        setLoadProgress(null);
-        if (haveCache) setRefreshFailed(true);
-        else setError("Steam throttled the refresh — showing the previous data. Your change is saved; reload in a minute to see it reflected.");
+        let j = null;
+        try {
+          const r = await fetch("/api/refresh");
+          j = await r.json();
+          if (!r.ok) throw new Error(j.error ?? "refresh failed");
+        } catch (e) {
+          if (!paintedAnything) throw e;   // nothing on screen → surface the real error
+          setLoadProgress(null);
+          setRefreshFailed(true);          // something complete is on screen — keep it, say so
+          break;
+        }
+        if (j.payload && fresh()) {
+          setClubData(j.payload);
+          paintedAnything = true;
+          if (firstStale === null) firstStale = (j.staleRemaining ?? 0) + (j.fetchedGames ?? 0);
+          setLoadProgress((j.staleRemaining ?? 0) > 0 ? { done: firstStale - j.staleRemaining, total: firstStale } : null);
+        }
+        if (j.fresh || (j.staleRemaining ?? 0) === 0) {
+          if (fresh()) { setDataAsOf(null); setLoadProgress(null); setRefreshFailed(false); }
+          break;
+        }
+        await sleep(1200);
       }
     } catch (e) {
       setLoadProgress(null);
