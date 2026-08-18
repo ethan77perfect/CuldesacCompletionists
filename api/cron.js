@@ -25,6 +25,7 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData } from "../lib/steamFetch.js";
+import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
 const tzPart = (type) =>
@@ -99,12 +100,19 @@ export default async function handler(req, res) {
   // /api/cron?secret=...&quiet=1, repeatedly, until staleRemaining: 0.
   const GAME_BUDGET = 60;   // ≈ 730 calls/run at 10 members — 2 nightly passes cover ~120 games
   const prevPayload0 = prevCache.data?.payload ?? null;
-  const prevFetchMap = prevPayload0?.gameFetchedAt ?? {};
   const clubIds = new Set(appids.map(Number));
-  const targets = [...appids]
-    .sort((a, b) => (prevFetchMap[a] ?? 0) - (prevFetchMap[b] ?? 0))
-    .slice(0, GAME_BUDGET);
-  const fetched = await fetchClubData(key, steamids, targets, { concurrency: 5 });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  // 20h freshness skip: the 11pm pass won't redo the 10pm pass's games,
+  // and a day of /api/refresh traffic means the cron often has little
+  // left to do — which is the point.
+  const { targets } = computeTargets(prevPayload0?.gameFetchedAt ?? {}, appids,
+    { budget: GAME_BUDGET, staleAfterSec: 20 * 3600, nowEpoch });
+  if (!targets.length) {
+    // everything fresh — still do the daily duties on the payload we have
+  }
+  const fetched = targets.length
+    ? await fetchClubData(key, steamids, targets, { concurrency: 5 })
+    : { games: [], profiles: {}, failed: 0 };
 
   // ---- 2. never MERGE garbage ----
   // The guard survives, per-run: a total wipeout or heavy throttling
@@ -112,25 +120,15 @@ export default async function handler(req, res) {
   // hour, not a lost night — and merge semantics mean a carried-over
   // game can never be replaced by a worse copy of itself.
   const totalReqs = targets.length * (2 + steamids.length) + steamids.length + 1;
-  if (!fetched.games.length || fetched.failed > Math.max(10, totalReqs * 0.15)) {
+  if (targets.length && (!fetched.games.length || fetched.failed > Math.max(10, totalReqs * 0.15))) {
     return res.status(502).json({ error: `Steam throttled ${fetched.failed}/${totalReqs} requests — skipped this run` });
   }
 
   // ---- merge: fetched games win, everything else carries over ----
-  const gotIds = new Set(fetched.games.map((g) => Number(g.appid)));
-  const nowEpoch = Math.floor(Date.now() / 1000);
-  const gameFetchedAt = { ...prevFetchMap };
-  for (const id of gotIds) gameFetchedAt[id] = nowEpoch;
-  for (const id of Object.keys(gameFetchedAt)) if (!clubIds.has(Number(id))) delete gameFetchedAt[id];
-  const data = {
-    games: [
-      ...fetched.games,
-      ...(prevPayload0?.games ?? []).filter((g) => !gotIds.has(Number(g.appid)) && clubIds.has(Number(g.appid))),
-    ],
-    profiles: { ...(prevPayload0?.profiles ?? {}), ...fetched.profiles },
-    gameFetchedAt,
-    failed: fetched.failed,
-  };
+  const merged = mergePayload(prevPayload0, fetched, clubIds, nowEpoch);
+  const gotIds = merged.gotIds;
+  const data = merged.payload;
+  data.failed = fetched.failed;
 
   // ---- 3. write cache + snapshot rows ----
   // Club-local date, not UTC: the 10pm Eastern run is 02:00–03:00 UTC
@@ -140,137 +138,47 @@ export default async function handler(req, res) {
   // the same `day` as the last UTC-stamped one and upserts over it —
   // two evenings merge into one row, once, then history is clean.
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: CLUB_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const rows = [];
-  for (const g of data.games) {
-    for (const sid of steamids) {
-      const unlocks = g.players[sid];
-      // LIBRARY SCOPE: a row per game the member OWNS (their
-      // GetOwnedGames playtime map, fetched with every profile pass),
-      // even with no achievement data yet — owned-but-untouched games
-      // write unlocked=0 so snapshot_daily's sum(total) becomes each
-      // member's library size, which is the Burndown chart's honest
-      // denominator. The || keeps two safety nets: free games Steam
-      // doesn't report as owned until first launch, and runs where the
-      // ownership fetch failed (empty map = unknown, not "owns
-      // nothing") degrade to the old started-games behavior instead of
-      // dropping the member's rows for the day.
-      const pt = data.profiles?.[sid]?.playtime ?? {};
-      const owned = Object.keys(pt).length > 0 && pt[g.appid] !== undefined;
-      if (!unlocks && !owned) continue;
-      rows.push({
-        day: today, steamid: sid, appid: g.appid,
-        unlocked: unlocks?.length ?? 0, total: g.ach.length,
-        complete: !!unlocks && unlocks.length === g.ach.length && g.ach.length > 0,
-      });
-    }
-  }
-  const prevFetchedAt = prevCache.data?.fetched_at ? Date.parse(prevCache.data.fetched_at) / 1000 : Date.now() / 1000 - 86400;
+  const rows = buildSnapshotRows(data, steamids, today);
   // Writes must fail LOUDLY — a silent write failure here shows up later
   // as "slow loads + Discord re-announcing everything" with no error.
-  const cacheWrite = await db.from("snapshot_cache").upsert({ id: 1, payload: data, fetched_at: new Date().toISOString() });
-  if (cacheWrite.error)
-    return res.status(500).json({ error: `snapshot_cache write failed: ${cacheWrite.error.message} — did you run supabase/migration-v4.sql?` });
+  // CAS because /api/refresh may be writing concurrently (migration-v11).
+  let wrote = await casWriteCache(db, prevCache.data ?? null, data, { touchFetchedAt: true });
+  if (!wrote) {
+    const again = await db.from("snapshot_cache").select("*").eq("id", 1).maybeSingle();
+    const remerged = mergePayload(again.data?.payload ?? null, fetched, clubIds, nowEpoch);
+    remerged.payload.announceWatermark = { ...remerged.payload.announceWatermark, ...ann.watermark };
+    wrote = await casWriteCache(db, again.data ?? null, remerged.payload, { touchFetchedAt: true });
+  }
+  if (!wrote)
+    return res.status(500).json({ error: "snapshot_cache write failed twice (CAS) — did you run supabase/migration-v11.sql?" });
   if (rows.length) {
     const rowWrite = await db.from("snapshots").upsert(rows);
     if (rowWrite.error)
       return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
   }
 
-  // ---- 3.5 pioneer scan: record unlocks made while the WORLD was ≤ pioneerPct ----
-  // Detected at ingest: if an unlock is new since last run and the
-  // achievement's current global % is tiny, that player was verifiably
-  // early — recorded permanently, immune to the % rising later.
-  // First-ever scan backfills from all current sub-threshold unlocks.
-  const pioneerPct = settingsRow.data?.data?.pioneerPct ?? 1.0;
-  // previous run's per-achievement pct, for graduation detection
-  const prevAchPct = new Map();
-  for (const g of prevCache.data?.payload?.games ?? [])
-    for (const a of g.ach) prevAchPct.set(`${g.appid}|${a.id}`, a.pct);
+  // ---- 3.5 discoveries: pioneers + completion/rare embeds ----
+  // Shared with /api/refresh: per-game announce watermarks mean a
+  // perfect the 2pm refresh already posted is invisible to this run.
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
-  const newPioneerKeys = new Set();
-  if (!existingPio.error) {
-    const have = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
-    const firstScan = (existingPio.data ?? []).length === 0;
-    const inserts = [];
-    for (const g of data.games) {
-      const achById = Object.fromEntries(g.ach.map((a) => [a.id, a]));
-      for (const [sid, unlocks] of Object.entries(g.players)) {
-        for (const u of unlocks) {
-          const a = achById[u.id];
-          if (!a || a.pct <= 0 || a.pct > pioneerPct) continue;   // 0.0% = unknown, never counts
-          const keyStr = `${sid}|${g.appid}|${u.id}`;
-          if (have.has(keyStr)) continue;
-          // GRADUATION: the achievement was unknown (0.0% / untracked) last
-          // run and now has a real sub-threshold value — everyone already
-          // holding it earned it while the world was at most this rare.
-          const prevPct = prevAchPct.get(`${g.appid}|${u.id}`);
-          const graduated = (prevPct === undefined || prevPct <= 0) && a.pct > 0;
-          if (firstScan || u.t >= prevFetchedAt || graduated) {
-            inserts.push({ steamid: sid, appid: g.appid, achid: u.id,
-              unlocked_at: u.t ? new Date(u.t * 1000).toISOString() : null, pct_at_unlock: a.pct });
-            if (!firstScan) newPioneerKeys.add(keyStr);
-          }
-        }
-      }
-    }
-    if (inserts.length) {
-      const w = await db.from("pioneers").upsert(inserts);
-      if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });
-    }
-  }
-
-  // ---- 4. the diff (against the previous RUN, not the previous day) ----
-  // The last run's full payload lives in snapshot_cache, so back-to-back
-  // runs diff cleanly and skipped nights don't break anything. The
-  // per-day snapshot rows are history-chart data, not diff data.
-  const prevPayload = prevCache.data?.payload ?? null;
-  const prevComplete = new Map();      // "sid|appid" -> was complete last run
-  const prevTracked = new Set();       // appids that existed last run
-  if (prevPayload?.games) {
-    for (const g of prevPayload.games) {
-      prevTracked.add(Number(g.appid));
-      for (const [sid, unlocks] of Object.entries(g.players ?? {})) {
-        prevComplete.set(`${sid}|${g.appid}`, unlocks.length === g.ach.length && g.ach.length > 0);
-      }
-    }
-  }
+  const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
+  const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
   const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
   const gameName = Object.fromEntries((gamesList.data ?? []).map((g) => [g.appid, g.name]));
-  const rarePct = settingsRow.data?.data?.notifyRarePct ?? 1.0;
+  const ann = diffAnnouncements({
+    prevPayload: prevPayload0, fetchedGames: fetched.games, nowEpoch,
+    nameOf, gameName,
+    rarePct: settingsRow.data?.data?.notifyRarePct ?? 1.0,
+    pioneerPct: settingsRow.data?.data?.pioneerPct ?? 1.0,
+    existingPioneerKeys, pioneerFirstScan,
+  });
+  data.announceWatermark = { ...data.announceWatermark, ...ann.watermark };
+  if (ann.pioneerInserts.length) {
+    const w = await db.from("pioneers").upsert(ann.pioneerInserts);
+    if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });
+  }
+  const embeds = [...ann.embeds];
 
-  const embeds = [];
-  // FIRST-RUN GUARD: no previous payload → establish the baseline
-  // silently instead of announcing the club's entire history.
-  const firstRun = !prevPayload;
-  // completions: complete now, wasn't complete last run, and the game
-  // was TRACKED last run (adding an already-beaten game isn't news)
-  for (const r of firstRun ? [] : rows) {
-    if (r.complete && prevTracked.has(Number(r.appid)) && !prevComplete.get(`${r.steamid}|${r.appid}`)) {
-      embeds.push({
-        title: `💯 ${nameOf[r.steamid]} perfected ${gameName[r.appid] ?? r.appid}!`,
-        description: `${r.total} achievements, all of them. The shelf grows.`,
-        color: 0xE8B84B,
-      });
-    }
-  }
-  // rare unlocks since last run
-  for (const g of data.games) {
-    const achById = Object.fromEntries(g.ach.map((a) => [a.id, a]));
-    for (const [sid, unlocks] of Object.entries(g.players)) {
-      for (const u of unlocks) {
-        const a = achById[u.id];
-        if (u.t >= prevFetchedAt && a && a.pct > 0 && a.pct <= rarePct) {
-          const isPio = newPioneerKeys.has(`${sid}|${g.appid}|${u.id}`);
-          embeds.push({
-            title: `${isPio ? "🚩" : "💎"} ${nameOf[sid]} unlocked "${a.name}"`,
-            description: `${g.name} — only **${a.pct.toFixed(2)}%** of players have this.` +
-              (isPio ? "\nPIONEER recorded — early forever, no matter how common it becomes." : ""),
-            color: isPio ? 0xE05B5B : 0xB48CE0,
-          });
-        }
-      }
-    }
-  }
   // Monday (club time): contract week report + spin-day call —
   // posts Monday EVENING, wrapping the first day of the fresh week
   const isMonday = tzPart("weekday") === "Mon" && !isManual && hourNow === "22";
@@ -306,7 +214,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
-    prevRunAt: prevCache.data?.fetched_at ?? null, firstRun,
+    prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,
     notifications: embeds.length, discord: Boolean(webhook),
   });
 }
