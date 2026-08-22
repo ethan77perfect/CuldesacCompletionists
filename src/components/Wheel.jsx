@@ -117,9 +117,54 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
   useEffect(() => { setResult(null); setCurrent(sliceAt(rotRef.current)); }, [built]);
 
-  function spin() {
+  // The animation is a REVEAL, not a decision: for contract modes the
+  // server has already drawn and persisted the outcome before the wheel
+  // starts turning, so refreshing mid-spin resumes the commitment
+  // rather than erasing it. Casual mode still draws locally — zero
+  // stakes, infinite re-spins, exactly as before.
+  const [armed, setArmed] = useState(false);       // public wheel: two-click arming
+  const [justSigned, setJustSigned] = useState(null);
+  const pendingOffer = (meta.contracts ?? []).find((c) =>
+    c.source === "personal" && c.steamid === spinner && c.status === "offered") ?? null;
+  const slicePayload = () => built.map((b) => ({ appid: b.appid, weight: b.weight }));
+
+  async function spin() {
     if (!built.length || spinning) return;
-    const winner = pickWeighted(built);
+    if (mode === "casual") {
+      spinToSlice(pickWeighted(built));
+      return;
+    }
+    if (mode === "personal") {
+      if (boundBy || pendingOffer) return;         // panel drives the next move
+      const j = await mutate("spinPersonal", { steamid: spinner, slices: slicePayload() }, null,
+        { quiet: true, reloadDelay: 6600 });
+      if (!j?.appid) return;
+      spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
+        () => setJustSigned(null));
+      return;
+    }
+    // public: first click arms, second click signs the week
+    if (boundBy) return;
+    if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 6000); return; }
+    setArmed(false);
+    const j = await mutate("spinBounty", { slices: slicePayload() }, null,
+      { quiet: true, reloadDelay: 6600 });
+    if (!j?.appid) return;
+    spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
+      () => setJustSigned({ kind: "bounty", appid: j.appid }));
+  }
+
+  async function burnRespin() {
+    if (!built.length || spinning || !pendingOffer) return;
+    const j = await mutate("spinPersonal", { steamid: spinner, slices: slicePayload() }, null,
+      { quiet: true, reloadDelay: 6600 });
+    if (!j?.appid) return;
+    spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
+      () => setJustSigned({ kind: "respin", appid: j.appid }));
+  }
+
+  function spinToSlice(winner, onDone) {
+    if (!winner || spinning) return;
     const landing = winner.start + winner.sweep * (0.2 + Math.random() * 0.6);
     // turns MUST be a whole number — fractional turns shift the landing
     // angle off the chosen slice (the "highlights a different slice" bug)
@@ -149,20 +194,19 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
         if (gRef.current) gRef.current.style.transform = `rotate(${target}deg)`;
         const finalIdx = sliceAt(target);
         setSpinning(false); setResult(slices[finalIdx]); setCurrent(finalIdx);
+        if (onDone) onDone();
       }
     };
     rafRef.current = requestAnimationFrame(frame);
   }
 
-  async function accept() {
-    if (!result) return;
-    await mutate("createContract",
-      { steamid: mode === "personal" ? spinner : null, appid: result.appid, source: mode },
-      () => mode === "personal"
-        ? `Contract signed: ${result.name} at 1.5× for ${stats.byId[spinner]?.name}`
-        : `⚡ BOUNTY POSTED: ${result.name} pays 2× for everyone!`);
+  async function signOffer() {
+    if (!pendingOffer) return;
+    await mutate("acceptSpin", { id: pendingOffer.id },
+      () => `Contract signed: ${gameNameOf(pendingOffer.appid)} at 1.5× for ${stats.byId[spinner]?.name}`);
     setResult(null);
   }
+  const gameNameOf = (appid) => stats.games.find((g) => Number(g.appid) === Number(appid))?.name ?? `App ${appid}`;
 
   const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
   // one active contract per person: spinner is bound until they beat it or Monday clears it.
@@ -266,7 +310,11 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               <text x={C} y={C + 2} textAnchor="middle" dominantBaseline="middle" fontSize="20" fontWeight="700"
                 fill={spinning ? "var(--faint)" : "var(--accent)"}
                 style={{ fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.14em", userSelect: "none" }}>
-                {spinning ? "· · ·" : boundBy ? (mode === "public" ? "POSTED" : "BOUND") : "SPIN"}
+                {spinning ? "· · ·"
+                  : boundBy ? (mode === "public" ? "POSTED" : "BOUND")
+                  : mode === "personal" && pendingOffer ? "OFFER"
+                  : mode === "public" && armed ? "SPIN!"
+                  : "SPIN"}
               </text>
             </g>
           </svg>
@@ -313,7 +361,15 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
             </div>
           )}
           {!result && !spinning && !boundBy && drumRows.length > 0 && (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>Hit the hub to spin.</p>
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>
+              {mode === "personal" && !pendingOffer && !boundBy &&
+                "Hit the hub to spin. You get the offer, then ONE re-spin — and the re-spin signs itself."}
+              {mode === "personal" && pendingOffer && "The wheel has spoken — decide below."}
+              {mode === "public" && !boundBy && (armed
+                ? "⚠ Armed. This spin signs the whole club's bounty — no take-backs. Hit it again."
+                : "Hit the hub twice to spin. The week's first spin signs itself for everyone.")}
+              {mode === "casual" && "Hit the hub to spin."}
+            </p>
           )}
           {result && mode === "casual" && (
             <div>
@@ -328,7 +384,39 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               </p>
             </div>
           )}
-          {result && !boundBy && mode !== "casual" && (
+          {pendingOffer && mode === "personal" && !spinning && (
+            <div>
+              <div style={{ ...S.label, marginBottom: 6 }}>The wheel offers</div>
+              <div style={{ ...S.display, fontSize: 22, fontWeight: 700, color: "var(--accent)", marginBottom: 4 }}>
+                {gameNameOf(pendingOffer.appid)}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                1.5× for {stats.byId[spinner]?.name} until Monday. Sign it — or burn your single re-spin,
+                which signs whatever comes up next. No third option, and refreshing won't save you.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={S.btn} disabled={busy} onClick={signOffer}>✍ Sign the contract</button>
+                <button style={{ ...S.btnGhost, color: "var(--err-border)", borderColor: "var(--err-border)" }}
+                  disabled={busy || spinning} onClick={burnRespin}>🔥 Burn the re-spin</button>
+              </div>
+            </div>
+          )}
+          {justSigned && !spinning && !pendingOffer && (
+            <div>
+              <div style={{ ...S.label, marginBottom: 6 }}>
+                {justSigned.kind === "bounty" ? "⚡ Bounty posted — signed on the spot" : "Signed. No questions asked."}
+              </div>
+              <div style={{ ...S.display, fontSize: 22, fontWeight: 700, color: "var(--accent)", marginBottom: 4 }}>
+                {gameNameOf(justSigned.appid)}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {justSigned.kind === "bounty"
+                  ? "2× for the whole club until Monday. First spin of the week is the law."
+                  : "That was the re-spin — it signs itself. 1.5× until Monday. The wheel thanks you for gambling."}
+              </div>
+            </div>
+          )}
+          {false && result && !boundBy && mode !== "casual" && (
             <div>
               <div style={{ ...S.label, marginBottom: 6 }}>The wheel has chosen</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

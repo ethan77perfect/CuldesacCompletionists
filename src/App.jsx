@@ -215,7 +215,11 @@ export default function App() {
   // notice or error, then calls loadAll() so the screen reflects the
   // database. successMsg is a function because some messages need the
   // server's response (e.g. the resolved game name).
-  async function mutate(op, body, successMsg) {
+  async function mutate(op, body, successMsg, opts = {}) {
+    // opts.reloadDelay: the Wheel commits spins server-side BEFORE the
+    // animation plays — deferring the meta reload keeps the wheel from
+    // being rebuilt mid-spin. opts.quiet: no notice banner (the Wheel
+    // narrates its own outcomes).
     setBusy(true); setError(""); setNotice("");
     try {
       const r = await fetch("/api/db", {
@@ -225,18 +229,18 @@ export default function App() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      setNotice(successMsg(j));
+      if (successMsg && !opts.quiet) setNotice(successMsg(j));
       // Only game-set changes need the full Steam pipeline (with its
       // snapshot-repaint-then-live-refresh dance). Everything else —
       // century picks, covers, contracts, votes, ratings, settings —
       // changes club metadata only: refresh that and let stats
       // recompute in place. This is what stops the library from
       // "vanishing and coming back" on unrelated edits.
-      if (["addGame", "removeGame", "promoteBacklog", "addMember", "removeMember"].includes(op)) {
-        await loadAll({ skipCache: true });   // the snapshot predates this change — don't paint from it
-      } else {
-        await loadMeta();
-      }
+      const after = ["addGame", "removeGame", "promoteBacklog", "addMember", "removeMember"].includes(op)
+        ? () => loadAll({ skipCache: true })   // the snapshot predates this change — don't paint from it
+        : () => loadMeta();
+      if (opts.reloadDelay) setTimeout(after, opts.reloadDelay);
+      else await after();
       return j;
     } catch (e) {
       setError(e.message || "That didn't work");

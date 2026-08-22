@@ -48,6 +48,22 @@ async function lookupGame(appid, steamKey) {
   };
 }
 
+// Week boundary — mirrors cron.js exactly so "this week" means the
+// same thing to spins, expiry, and the Monday report.
+const nextMonday = (epoch) => {
+  const d = new Date(epoch * 1000);
+  const days = ((8 - d.getUTCDay()) % 7) || 7;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days) / 1000;
+};
+const drawWeighted = (slices) => {
+  const tot = slices.reduce((t, x) => t + x.weight, 0);
+  let r = Math.random() * tot;
+  for (const x of slices) { r -= x.weight; if (r <= 0) return x; }
+  return slices[slices.length - 1];
+};
+const validSlices = (raw) => Array.isArray(raw) && raw.length >= 1 && raw.length <= 400 &&
+  raw.every((x) => Number.isFinite(Number(x.appid)) && Number.isFinite(x.weight) && x.weight > 0);
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
 
@@ -264,19 +280,73 @@ export default async function handler(req, res) {
         if (error) return fail(500, error.message);
         return res.status(200).json({ ok: true });
       }
-      case "createContract": {
-        const { error } = await supabase.from("contracts").insert({
-          steamid: body.steamid ?? null,                 // null = public bounty
-          appid: Number(body.appid),
-          multiplier: body.source === "public" ? 2.0 : 1.5,
-          source: body.source === "public" ? "public" : "personal",
-        });
-        if (error) return fail(500, error.message);
+      // ---- binding wheel spins (v12) ----
+      // The SERVER draws the winner before the wheel ever animates, and
+      // the outcome is persisted immediately — so a refresh mid-spin
+      // resumes the commitment instead of erasing it. The client sends
+      // the slice list it displayed (appids + weights); yes, a clubKey
+      // holder could curl a rigged list, but they could always curl a
+      // contract into existence — the enforcement target is refresh-
+      // skirting, not cryptography, and this is a club of friends.
+      case "spinPersonal": {
+        const steamid = String(body.steamid ?? "");
+        if (!/^\d{17}$/.test(steamid)) return fail(400, "Bad steamid");
+        if (!validSlices(body.slices)) return fail(400, "Bad slices");
+        const rows = await supabase.from("contracts").select("*").eq("steamid", steamid).eq("source", "personal");
+        if (rows.error) return fail(500, rows.error.message);
+        const nowSec = Date.now() / 1000;
+        const thisWeek = (rows.data ?? []).filter((c) =>
+          nextMonday(Date.parse(c.accepted_at) / 1000) === nextMonday(nowSec));
+        if (thisWeek.some((c) => c.status !== "offered"))
+          return fail(409, "Already under contract this week — the wheel remembers");
+        const winner = drawWeighted(body.slices);
+        const offer = thisWeek.find((c) => c.status === "offered");
+        if (offer) {
+          // the single re-spin: signs itself, no questions asked
+          const w = await supabase.from("contracts")
+            .update({ appid: Number(winner.appid), status: "signed", respun: true, accepted_at: new Date().toISOString() })
+            .eq("id", offer.id).eq("status", "offered").select("id");
+          if (w.error) return fail(500, w.error.message);
+          if (!(w.data ?? []).length) return fail(409, "Re-spin already resolved — refresh the page");
+          return res.status(200).json({ ok: true, phase: "signed", respun: true, appid: Number(winner.appid) });
+        }
+        const ins = await supabase.from("contracts")
+          .insert({ steamid, appid: Number(winner.appid), multiplier: 1.5, source: "personal", status: "offered" })
+          .select("id").single();
+        if (ins.error) return fail(500, `${ins.error.message} — run supabase/migration-v12.sql?`);
+        return res.status(200).json({ ok: true, phase: "offered", appid: Number(winner.appid), contractId: ins.data.id });
+      }
+      case "acceptSpin": {
+        const w = await supabase.from("contracts")
+          .update({ status: "signed", accepted_at: new Date().toISOString() })
+          .eq("id", Number(body.id)).eq("status", "offered").select("id");
+        if (w.error) return fail(500, w.error.message);
+        if (!(w.data ?? []).length) return fail(409, "No pending offer to sign — refresh the page");
         return res.status(200).json({ ok: true });
       }
+      case "spinBounty": {
+        if (!validSlices(body.slices)) return fail(400, "Bad slices");
+        const rows = await supabase.from("contracts").select("*").is("steamid", null).eq("source", "public");
+        if (rows.error) return fail(500, rows.error.message);
+        const nowSec = Date.now() / 1000;
+        if ((rows.data ?? []).some((c) => c.status !== "offered" &&
+            nextMonday(Date.parse(c.accepted_at) / 1000) === nextMonday(nowSec)))
+          return fail(409, "This week's bounty is already posted");
+        const winner = drawWeighted(body.slices);
+        const ins = await supabase.from("contracts")
+          .insert({ steamid: null, appid: Number(winner.appid), multiplier: 2.0, source: "public", status: "signed" })
+          .select("id").single();
+        if (ins.error) return fail(500, `${ins.error.message} — run supabase/migration-v12.sql?`);
+        return res.status(200).json({ ok: true, appid: Number(winner.appid) });
+      }
       case "abandonContract": {
-        const { error } = await supabase.from("contracts").delete().eq("id", body.id);
-        if (error) return fail(500, error.message);
+        // Signed contracts keep the existing tear-up rule (the club's
+        // call to change) — but OFFERS can't be abandoned: you sign, or
+        // you burn the re-spin. That's the whole point of v12.
+        const d = await supabase.from("contracts").delete()
+          .eq("id", body.id).neq("status", "offered").select("id");
+        if (d.error) return fail(500, d.error.message);
+        if (!(d.data ?? []).length) return fail(409, "Offers can't be torn up — sign it or burn the re-spin");
         return res.status(200).json({ ok: true });
       }
       // ---- monthly hunts ----

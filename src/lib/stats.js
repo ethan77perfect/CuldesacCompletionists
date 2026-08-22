@@ -145,7 +145,10 @@ export function buildClubStats(clubData, meta, settings) {
     const m = new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
     return m.getTime() / 1000;
   };
-  const contracts = (meta.contracts ?? []).map((c) => {
+  // 'offered' rows (v12) are a pending decision, not a live contract:
+  // no multiplier, no board presence, no ledger entry. The Wheel reads
+  // them straight off meta.contracts.
+  const contracts = (meta.contracts ?? []).filter((c) => c.status !== "offered").map((c) => {
     const epoch = Date.parse(c.accepted_at) / 1000;
     return { ...c, epoch, expiry: nextMonday(epoch), multiplier: parseFloat(c.multiplier) };
   });

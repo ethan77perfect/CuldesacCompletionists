@@ -183,7 +183,11 @@ export default async function handler(req, res) {
   // posts Monday EVENING, wrapping the first day of the fresh week
   const isMonday = tzPart("weekday") === "Mon" && !isManual && hourNow === "22";
   if (isMonday) {
-    const lastWeek = contracts.data?.filter((c) => {
+    // stale offers (spun, never signed, week rolled over) die silently —
+    // no shame embed, they never became contracts
+    await db.from("contracts").delete().eq("status", "offered")
+      .lt("accepted_at", new Date((nextMonday(Date.now() / 1000) - 7 * 86400) * 1000).toISOString());
+    const lastWeek = contracts.data?.filter((c) => c.status !== "offered").filter((c) => {
       const epoch = Date.parse(c.accepted_at) / 1000;
       return nextMonday(epoch) * 1000 >= Date.now() - 86400000 && epoch < Date.now() / 1000;
     }) ?? [];
