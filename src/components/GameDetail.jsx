@@ -33,8 +33,10 @@ export default function GameDetail({ stats, appid, meta, mutate, busy, nav }) {
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
             {g.ach.length} achievements · pool {g.pool} pts · rarest {Math.min(...g.ach.map((a) => a.pct)).toFixed(2)}%
             {g.unrated
-              ? <span style={{ color: "var(--accent)" }}> · ⏱ no time data — add median hours in Settings</span>
-              : <span> · {g.hours}h median</span>}
+              ? <span style={{ color: "var(--accent)" }}> · ⏱ no time data — add median hours in Settings, or a club finish will rate it</span>
+              : <span> · {g.hours}h{g.clubTimeVotes > 0
+                  ? ` (median + ${g.clubTimeVotes} club time${g.clubTimeVotes === 1 ? "" : "s"})`
+                  : " median"}</span>}
             {g.race && <span> · 🏁 race</span>}
           </div>
         </div>

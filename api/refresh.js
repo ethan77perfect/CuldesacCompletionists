@@ -116,6 +116,8 @@ export default async function handler(req, res) {
 
   // ---- discoveries: pioneers + announcements, per-game watermarks ----
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
+  const existingComp = await db.from("completions").select("steamid, appid");
+  const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
   const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
   const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
   const cfg = settingsRow.data?.data ?? {};
@@ -125,6 +127,8 @@ export default async function handler(req, res) {
     gameName: Object.fromEntries((gamesList.data ?? []).map((g) => [g.appid, g.name])),
     rarePct: cfg.notifyRarePct ?? 1.0, pioneerPct: cfg.pioneerPct ?? 1.0,
     existingPioneerKeys, pioneerFirstScan,
+    profiles: payload.profiles,
+    existingCompletionKeys,
   });
   payload.announceWatermark = { ...payload.announceWatermark, ...ann.watermark };
 
@@ -146,6 +150,8 @@ export default async function handler(req, res) {
   }
 
   if (ann.pioneerInserts.length) await db.from("pioneers").upsert(ann.pioneerInserts);
+  if (ann.completionInserts.length)
+    await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   if (webhook && ann.embeds.length && wrote) await postDiscord(webhook, ann.embeds);
 

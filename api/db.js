@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -94,6 +94,7 @@ export default async function handler(req, res) {
         supabase.from("covers").select("*"),
         supabase.from("bingo_rounds").select("*").order("created_at"),
         supabase.from("bingo_cards").select("*"),
+        supabase.from("completions").select("*"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -116,6 +117,7 @@ export default async function handler(req, res) {
         covers: covers.error ? [] : (covers.data ?? []),          // tolerate pre-v7 DBs
         bingoRounds: bingoRounds.error ? [] : (bingoRounds.data ?? []),   // tolerate pre-v9 DBs
         bingoCards: bingoCards.error ? [] : (bingoCards.data ?? []),      // tolerate pre-v9 DBs
+        completions: completions.error ? [] : (completions.data ?? []),   // tolerate pre-v13 DBs
       });
     }
 

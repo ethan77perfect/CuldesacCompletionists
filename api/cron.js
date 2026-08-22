@@ -161,6 +161,8 @@ export default async function handler(req, res) {
   // Shared with /api/refresh: per-game announce watermarks mean a
   // perfect the 2pm refresh already posted is invisible to this run.
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
+  const existingComp = await db.from("completions").select("steamid, appid");
+  const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
   const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
   const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
   const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
@@ -171,8 +173,12 @@ export default async function handler(req, res) {
     rarePct: settingsRow.data?.data?.notifyRarePct ?? 1.0,
     pioneerPct: settingsRow.data?.data?.pioneerPct ?? 1.0,
     existingPioneerKeys, pioneerFirstScan,
+    profiles: data.profiles,
+    existingCompletionKeys,
   });
   data.announceWatermark = { ...data.announceWatermark, ...ann.watermark };
+  if (ann.completionInserts.length)
+    await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
   if (ann.pioneerInserts.length) {
     const w = await db.from("pioneers").upsert(ann.pioneerInserts);
     if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });

@@ -59,7 +59,26 @@ export function buildClubStats(clubData, meta, settings) {
   // ---- the difficulty curve: built once from ALL rated games ----
   // (percentile-based, so it must see the whole set before any single
   // game can be scored — see scoring.js for the philosophy)
-  const hoursOf = (row) => (row?.hours_median != null && Number(row.hours_median) > 0 ? Number(row.hours_median) : null);
+  // Effective hours = the curator's median blended with CLUB completion
+  // times, each an equal vote (v13): median 30 + finishes of 40 and 25
+  // → 31.7h. A game with no median but club finishes is rated by the
+  // club alone — real data beats a blank. The curve is founded on the
+  // blended values, so finishing a game can (honestly) re-rate it.
+  const clubTimes = {};
+  for (const c of meta.completions ?? []) {
+    const h = Number(c.hours);
+    if (Number.isFinite(h) && h > 0) (clubTimes[Number(c.appid)] ??= []).push(h);
+  }
+  const hoursOf = (row) => {
+    if (!row) return null;
+    const votes = [
+      ...(row.hours_median != null && Number(row.hours_median) > 0 ? [Number(row.hours_median)] : []),
+      ...(clubTimes[Number(row.appid)] ?? []),
+    ];
+    if (!votes.length) return null;
+    return Math.round((votes.reduce((s, h) => s + h, 0) / votes.length) * 10) / 10;
+  };
+  const clubVotesOf = (row) => (clubTimes[Number(row?.appid)] ?? []).length;
   const allHours = (meta.games ?? []).map(hoursOf);
   const curve = buildDifficultyCurve(allHours);
 
@@ -67,6 +86,7 @@ export function buildClubStats(clubData, meta, settings) {
   const games = clubData.games.map((raw) => {
     const db = dbGames[raw.appid] ?? {};
     const table = pointTable(raw.ach, cfg, { hours: hoursOf(db), curve });
+    const clubTimeVotes = clubVotesOf(db);
     // keep RAW pcts for display (0 renders as ⏳ Unrated) with a flag
     const achById = Object.fromEntries(raw.ach.map((a) => [a.id, { ...a, provisional: a.pct <= 0 }]));
     const players = {};
@@ -93,7 +113,7 @@ export function buildClubStats(clubData, meta, settings) {
       name: db.name ?? raw.name,
       race: db.race ?? false, notes: db.notes ?? "",
       diff: table.diff, hours: table.hours, unrated: table.unrated,
-      pool: table.pool, table, achById, players,
+      pool: table.pool, table, achById, clubTimeVotes, players,
     };
   });
 
