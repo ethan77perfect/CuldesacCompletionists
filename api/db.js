@@ -342,13 +342,25 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, appid: Number(winner.appid) });
       }
       case "abandonContract": {
-        // Signed contracts keep the existing tear-up rule (the club's
-        // call to change) — but OFFERS can't be abandoned: you sign, or
-        // you burn the re-spin. That's the whole point of v12.
+        // Two things can't be torn up:
+        //  - OFFERS — you sign, or you burn the re-spin (v12).
+        //  - anything signed THIS WEEK — spinPersonal/spinBounty only
+        //    look for a row in the current week, so deleting the row
+        //    handed the spin (and the re-spin) straight back. A binding
+        //    spin that the ✕ un-binds isn't binding. Old rows — last
+        //    week's expired or fulfilled — can still be cleared.
+        const row = await supabase.from("contracts").select("id, status, accepted_at")
+          .eq("id", Number(body.id)).maybeSingle();
+        if (row.error) return fail(500, row.error.message);
+        if (!row.data) return fail(404, "No such contract");
+        if (row.data.status === "offered") return fail(409, "Offers can't be torn up — sign it or burn the re-spin");
+        const nowSec = Date.now() / 1000;
+        if (nextMonday(Date.parse(row.data.accepted_at) / 1000) === nextMonday(nowSec))
+          return fail(409, "Signed this week — it's binding until Monday");
         const d = await supabase.from("contracts").delete()
-          .eq("id", body.id).neq("status", "offered").select("id");
+          .eq("id", Number(body.id)).neq("status", "offered").select("id");
         if (d.error) return fail(500, d.error.message);
-        if (!(d.data ?? []).length) return fail(409, "Offers can't be torn up — sign it or burn the re-spin");
+        if (!(d.data ?? []).length) return fail(409, "Contract already gone — refresh the page");
         return res.status(200).json({ ok: true });
       }
       // ---- monthly hunts ----

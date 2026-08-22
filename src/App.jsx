@@ -216,9 +216,11 @@ export default function App() {
   // database. successMsg is a function because some messages need the
   // server's response (e.g. the resolved game name).
   async function mutate(op, body, successMsg, opts = {}) {
-    // opts.reloadDelay: the Wheel commits spins server-side BEFORE the
-    // animation plays — deferring the meta reload keeps the wheel from
-    // being rebuilt mid-spin. opts.quiet: no notice banner (the Wheel
+    // opts.reloadAfter: a promise — the Wheel commits spins server-side
+    // BEFORE the animation plays, and settles this when the wheel has
+    // landed, so the meta reload never rebuilds the page under a turning
+    // wheel. Capped: leave the page mid-spin and the reload still
+    // happens, just later. opts.quiet: no notice banner (the Wheel
     // narrates its own outcomes).
     setBusy(true); setError(""); setNotice("");
     try {
@@ -239,7 +241,7 @@ export default function App() {
       const after = ["addGame", "removeGame", "promoteBacklog", "addMember", "removeMember"].includes(op)
         ? () => loadAll({ skipCache: true })   // the snapshot predates this change — don't paint from it
         : () => loadMeta();
-      if (opts.reloadDelay) setTimeout(after, opts.reloadDelay);
+      if (opts.reloadAfter) Promise.race([opts.reloadAfter, sleep(12000)]).then(after);
       else await after();
       return j;
     } catch (e) {

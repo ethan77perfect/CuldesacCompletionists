@@ -14,6 +14,18 @@
 //    half so they never read upside down; slivers get tooltips + the
 //    drum instead.
 //  - The pointer kicks on every slice boundary.
+//
+// v3.4 — binding spins without the dead click:
+//  - Contract spins are drawn by the SERVER (refresh-proof), but the
+//    wheel no longer waits for the answer. It launches on the click at
+//    a fixed velocity; when the reply lands it hands off to the
+//    friction curve with the SAME velocity, so the wheel just starts
+//    running out of spin. The round-trip is spent spinning, not frozen.
+//  - The panel shows the server's verdict the instant the wheel stops.
+//    It never renders the previous offer (Burn button and all) during
+//    the moment meta takes to reload.
+//  - Contracts signed this week are binding: no ✕ in the ledger, and
+//    the server refuses the tear-up regardless of what the UI shows.
 // ---------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from "react";
 import { S, Dial } from "./ui.jsx";
@@ -27,6 +39,19 @@ function pickWeighted(items) {
   return items[items.length - 1];
 }
 
+// Week boundary — mirrors stats.js (local Monday 00:00) so a contract
+// signed a moment ago can show its expiry before meta has reloaded.
+const nextMonday = (epoch) => {
+  const d = new Date(epoch * 1000);
+  const days = ((8 - d.getDay()) % 7) || 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days).getTime() / 1000;
+};
+
+// Launch velocity in deg/ms (~4.9 rev/s). The friction curve below has
+// θ'(0) = 4·total/D; every spin is parameterized so that equals OMEGA,
+// which is what lets a free-running wheel hand off to it seamlessly.
+const OMEGA = 1.75;
+
 export default function Wheel({ stats, meta, mutate, busy, nav }) {
   const [mode, setMode] = useState("personal");
   const [spinner, setSpinner] = useState(meta.members[0]?.steamid ?? "");
@@ -39,6 +64,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   const gRef = useRef(null);                   // rotating <g>; mutated per frame (no re-render)
   const rotRef = useRef(0);
   const rafRef = useRef(null);
+  const motion = useRef(null);                 // the spin in flight ({ kind: "free" | "decel", … }); null at rest
 
   const slices = useMemo(() => {
     if (mode === "public") {
@@ -115,89 +141,174 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
   };
 
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
-  useEffect(() => { setResult(null); setCurrent(sliceAt(rotRef.current)); }, [built]);
 
-  // The animation is a REVEAL, not a decision: for contract modes the
-  // server has already drawn and persisted the outcome before the wheel
-  // starts turning, so refreshing mid-spin resumes the commitment
-  // rather than erasing it. Casual mode still draws locally — zero
-  // stakes, infinite re-spins, exactly as before.
-  const [armed, setArmed] = useState(false);       // public wheel: two-click arming
-  const [justSigned, setJustSigned] = useState(null);
-  const pendingOffer = (meta.contracts ?? []).find((c) =>
+  // Reset the result/drum only when the wheel's SHAPE changes (mode,
+  // spinner, filters, roster) — not when meta reloads into an identical
+  // wheel, or the winning slice would go dark right after the reload
+  // that follows every contract spin.
+  const shape = useMemo(() => built.map((b) => `${b.appid}:${b.sweep.toFixed(3)}`).join("|"), [built]);
+  useEffect(() => { setResult(null); setCurrent(sliceAt(rotRef.current)); }, [shape]);
+
+  const gameNameOf = (appid) => stats.games.find((g) => Number(g.appid) === Number(appid))?.name ?? `App ${appid}`;
+
+  // ---- state of play ----
+  // `verdict` is the server's answer for the spin that just landed,
+  // applied the moment the wheel stops and held until meta reloads with
+  // the same truth. Without it, the panel reads meta.contracts — which
+  // still says "offered" for the second or two the reload takes — and
+  // shows the PREVIOUS offer, Burn button included, after a re-spin
+  // that already signed itself. (Pressing it earned a 409.)
+  const [verdict, setVerdict] = useState(null);    // { mode, steamid?, kind: "offered" | "signed", offer? | bound? }
+  useEffect(() => setVerdict(null), [meta]);        // meta reloaded → it is the truth again
+  const [armed, setArmed] = useState(false);        // public wheel: two-click arming
+  const [justSigned, setJustSigned] = useState(null);   // panel narration; lives until the next spin or a mode change
+
+  const mine = verdict && verdict.mode === mode && (mode === "public" || verdict.steamid === spinner) ? verdict : null;
+  const metaOffer = (meta.contracts ?? []).find((c) =>
     c.source === "personal" && c.steamid === spinner && c.status === "offered") ?? null;
-  const slicePayload = () => built.map((b) => ({ appid: b.appid, weight: b.weight }));
+  const pendingOffer = mine ? (mine.kind === "offered" ? mine.offer : null) : metaOffer;
 
-  async function spin() {
+  const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
+  // one active contract per person: spinner is bound until they beat it or Monday clears it.
+  // Same rule for the club: one live bounty at a time — beat it or Monday clears it.
+  // Casual mode is NEVER bound — a live contract gates scoring spins,
+  // not "what do I feel like playing tonight."
+  const boundBy = mode === "casual" ? null
+    : mine?.kind === "signed" ? mine.bound
+    : mode === "personal"
+    ? stats.contractView.find((c) => c.steamid === spinner && c.status === "active")
+    : activeBounty ?? null;
+  // what boundBy will look like once meta catches up — built locally so
+  // the hub reads BOUND/POSTED the instant the wheel stops
+  const bindingOn = (appid, multiplier, steamid = null) => ({
+    appid: Number(appid), steamid, multiplier, source: steamid ? "personal" : "public",
+    gameName: gameNameOf(appid), expiry: nextMonday(Date.now() / 1000), status: "active",
+  });
+
+  // ---- spin engine ----
+  // One requestAnimationFrame loop, two phases:
+  //   FREE  — the hub was hit. The wheel takes off THIS frame at OMEGA
+  //           while the server draws the winner; nothing about the
+  //           outcome is known yet and nothing needs to be.
+  //   DECEL — the answer is in. Hand off to the friction curve
+  //           θ(t) = total·(1−(1−t)⁴) with D = 4·total/OMEGA, so the
+  //           curve's initial velocity equals the free-phase velocity:
+  //           no hitch, the wheel simply starts running out of spin.
+  // Casual mode draws locally and goes straight to DECEL. The handoff
+  // re-anchors on the last painted frame (its time and angle) so no
+  // degrees go missing between "reply arrived" and "next frame".
+  function launch() {
+    if (motion.current || !built.length) return false;
+    const t0 = performance.now();
+    motion.current = { kind: "free", from: rotRef.current, t0, lastNow: t0 };
+    setSpinning(true); setResult(null);
+    let lastIdx = sliceAt(rotRef.current);
+    const frame = (now) => {
+      const m = motion.current;
+      if (!m) return;
+      let rot, done = false;
+      if (m.kind === "free") rot = m.from + OMEGA * (now - m.t0);
+      else {
+        const t = Math.min(1, (now - m.t0) / m.D);
+        rot = m.from + m.total * (1 - Math.pow(1 - t, 4));   // friction: fast launch, long decay
+        done = t >= 1;
+      }
+      m.lastNow = now;
+      rotRef.current = rot;
+      if (gRef.current) gRef.current.style.transform = `rotate(${rot}deg)`;
+      const idx = sliceAt(rot);
+      if (idx !== lastIdx) { lastIdx = idx; setCurrent(idx); setTick((k) => k + 1); }
+      if (!done) { rafRef.current = requestAnimationFrame(frame); return; }
+      // snap to the exact target and read the result from where the
+      // wheel PHYSICALLY stopped — pointer, highlight, drum, and the
+      // contract can never disagree
+      motion.current = null;
+      rotRef.current = m.target;
+      if (gRef.current) gRef.current.style.transform = `rotate(${m.target}deg)`;
+      const finalIdx = sliceAt(m.target);
+      setSpinning(false); setCurrent(finalIdx); setResult(m.fizzle ? null : slices[finalIdx]);
+      if (m.onDone) m.onDone();
+    };
+    rafRef.current = requestAnimationFrame(frame);
+    return true;
+  }
+
+  // give the free-running wheel its destination: 4.5–5.5 more turns,
+  // then rest with `winner` under the pointer
+  function landOn(winner, onDone) {
+    const m = motion.current;
+    if (!m || m.kind !== "free") return;
+    if (!winner) { fizzle(); return; }
+    const from = rotRef.current;
+    const landing = winner.start + winner.sweep * (0.2 + Math.random() * 0.6);
+    const want = (360 - landing) % 360;              // rot ≡ want (mod 360) puts `landing` under the pointer
+    const nominal = (4.5 + Math.random()) * 360;
+    // the first rotation at least `nominal` ahead that is ≡ want — whole
+    // turns plus the landing offset, never a fractional turn (the old
+    // "highlights a different slice" bug)
+    const target = Math.ceil((from + nominal - want) / 360) * 360 + want;
+    const total = target - from;
+    motion.current = { kind: "decel", from, t0: m.lastNow, lastNow: m.lastNow, total, D: 4 * total / OMEGA, target, onDone };
+  }
+
+  // the server said no (or the wheel changed under us): brake to a stop
+  // with no verdict — the error banner explains, the reload shows the truth
+  function fizzle() {
+    const m = motion.current;
+    if (!m || m.kind !== "free") return;
+    const from = rotRef.current, D = 900, total = OMEGA * D / 4;
+    motion.current = { kind: "decel", from, t0: m.lastNow, lastNow: m.lastNow, total, D, target: from + total, fizzle: true };
+  }
+
+  const slicePayload = () => built.map((b) => ({ appid: b.appid, weight: b.weight }));
+  const byAppid = (appid) => built.find((b) => Number(b.appid) === Number(appid));
+
+  // Contract spins: launch NOW, ask the server, land on its answer.
+  // `settled` holds App's post-write meta reload until the wheel has
+  // landed (the page isn't rebuilt under a turning wheel), and the
+  // verdict is applied in the same breath so the panel never lags.
+  async function spinForContract(op, body, onLanded) {
+    let settle; const settled = new Promise((r) => { settle = r; });
+    if (!launch()) return;
+    const j = await mutate(op, body, null, { quiet: true, reloadAfter: settled });
+    if (!j?.appid) { fizzle(); settle(); return; }
+    const winner = byAppid(j.appid);
+    if (!winner) { fizzle(); settle(); return; }
+    landOn(winner, () => { onLanded(j); settle(); });
+  }
+
+  function spin() {
     if (!built.length || spinning) return;
-    if (mode === "casual") {
-      spinToSlice(pickWeighted(built));
-      return;
-    }
+    if (mode === "casual") { if (launch()) landOn(pickWeighted(built)); return; }
     if (mode === "personal") {
       if (boundBy || pendingOffer) return;         // panel drives the next move
-      const j = await mutate("spinPersonal", { steamid: spinner, slices: slicePayload() }, null,
-        { quiet: true, reloadDelay: 6600 });
-      if (!j?.appid) return;
-      spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
-        () => setJustSigned(null));
+      setJustSigned(null);
+      const who = spinner;
+      spinForContract("spinPersonal", { steamid: who, slices: slicePayload() }, (j) => {
+        // spin 1 → an OFFER: sign it, or burn the single re-spin
+        setVerdict({ mode: "personal", steamid: who, kind: "offered",
+          offer: { id: j.contractId, appid: j.appid, steamid: who, source: "personal", status: "offered" } });
+      });
       return;
     }
     // public: first click arms, second click signs the week
     if (boundBy) return;
     if (!armed) { setArmed(true); setTimeout(() => setArmed(false), 6000); return; }
-    setArmed(false);
-    const j = await mutate("spinBounty", { slices: slicePayload() }, null,
-      { quiet: true, reloadDelay: 6600 });
-    if (!j?.appid) return;
-    spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
-      () => setJustSigned({ kind: "bounty", appid: j.appid }));
+    setArmed(false); setJustSigned(null);
+    spinForContract("spinBounty", { slices: slicePayload() }, (j) => {
+      setVerdict({ mode: "public", kind: "signed", bound: bindingOn(j.appid, 2) });
+      setJustSigned({ kind: "bounty", appid: j.appid });
+    });
   }
 
-  async function burnRespin() {
+  function burnRespin() {
     if (!built.length || spinning || !pendingOffer) return;
-    const j = await mutate("spinPersonal", { steamid: spinner, slices: slicePayload() }, null,
-      { quiet: true, reloadDelay: 6600 });
-    if (!j?.appid) return;
-    spinToSlice(built.find((b) => Number(b.appid) === Number(j.appid)),
-      () => setJustSigned({ kind: "respin", appid: j.appid }));
-  }
-
-  function spinToSlice(winner, onDone) {
-    if (!winner || spinning) return;
-    const landing = winner.start + winner.sweep * (0.2 + Math.random() * 0.6);
-    // turns MUST be a whole number — fractional turns shift the landing
-    // angle off the chosen slice (the "highlights a different slice" bug)
-    const turns = 5 + Math.floor(Math.random() * 2);
-    const from = rotRef.current;
-    const target = from - (from % 360) + turns * 360 + (360 - landing);
-    const total = target - from;
-    const D = 4600 + Math.random() * 1200;         // 4.6–5.8s
-    const t0 = performance.now();
-    setSpinning(true); setResult(null);
-    let lastIdx = sliceAt(from);
-
-    const frame = (now) => {
-      const t = Math.min(1, (now - t0) / D);
-      const eased = 1 - Math.pow(1 - t, 4);        // friction: fast launch, long decay
-      const rot = from + total * eased;
-      rotRef.current = rot;
-      if (gRef.current) gRef.current.style.transform = `rotate(${rot}deg)`;
-      const idx = sliceAt(rot);
-      if (idx !== lastIdx) { lastIdx = idx; setCurrent(idx); setTick((k) => k + 1); }
-      if (t < 1) rafRef.current = requestAnimationFrame(frame);
-      else {
-        // snap to the exact target and read the result from where the
-        // wheel PHYSICALLY stopped — pointer, highlight, drum, and the
-        // contract can never disagree
-        rotRef.current = target;
-        if (gRef.current) gRef.current.style.transform = `rotate(${target}deg)`;
-        const finalIdx = sliceAt(target);
-        setSpinning(false); setResult(slices[finalIdx]); setCurrent(finalIdx);
-        if (onDone) onDone();
-      }
-    };
-    rafRef.current = requestAnimationFrame(frame);
+    const who = spinner;
+    spinForContract("spinPersonal", { steamid: who, slices: slicePayload() }, (j) => {
+      // the re-spin signs itself — no offer, no Burn button, just the law
+      setVerdict({ mode: "personal", steamid: who, kind: "signed", bound: bindingOn(j.appid, 1.5, who) });
+      setJustSigned({ kind: "respin", appid: j.appid });
+    });
   }
 
   async function signOffer() {
@@ -206,17 +317,7 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
       () => `Contract signed: ${gameNameOf(pendingOffer.appid)} at 1.5× for ${stats.byId[spinner]?.name}`);
     setResult(null);
   }
-  const gameNameOf = (appid) => stats.games.find((g) => Number(g.appid) === Number(appid))?.name ?? `App ${appid}`;
 
-  const activeBounty = stats.contractView.filter((c) => c.source === "public" && c.status === "active").slice(-1)[0];
-  // one active contract per person: spinner is bound until they beat it or Monday clears it.
-  // Same rule for the club: one live bounty at a time — beat it or Monday clears it.
-  // Casual mode is NEVER bound — a live contract gates scoring spins,
-  // not "what do I feel like playing tonight."
-  const boundBy = mode === "casual" ? null
-    : mode === "personal"
-    ? stats.contractView.find((c) => c.steamid === spinner && c.status === "active")
-    : activeBounty ?? null;
   const fmtExpiry = (t) => new Date(t * 1000).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 
   // drum readout: current slice ± 2 neighbors, curved away in perspective
@@ -229,8 +330,9 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
     <div style={{ display: "grid", gap: 14 }}>
       <div className="panel" style={{ ...S.panel, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         {[["personal", "Personal wheel · 1.5×"], ["public", "Public bounty · 2×"], ["casual", "🎲 Right now · no stakes"]].map(([k, l]) => (
-          <button key={k} style={{ ...S.btnGhost, ...(mode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
-            onClick={() => { setMode(k); setResult(null); }}>{l}</button>
+          <button key={k} disabled={spinning}
+            style={{ ...S.btnGhost, ...(mode === k ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : {}) }}
+            onClick={() => { setMode(k); setResult(null); setJustSigned(null); }}>{l}</button>
         ))}
         {mode !== "public" && (() => {
           const ownershipKnown = Object.keys(stats.profilesPlaytime?.[spinner] ?? {}).length > 0;
@@ -238,18 +340,19 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
           return (
             <span style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 13, color: "var(--muted)", flexWrap: "wrap" }}>
               Spinning as
-              <select value={spinner} onChange={(e) => { setSpinner(e.target.value); setResult(null); }} style={{ ...S.input, width: "auto" }}>
+              <select value={spinner} disabled={spinning} style={{ ...S.input, width: "auto" }}
+                onChange={(e) => { setSpinner(e.target.value); setResult(null); setJustSigned(null); }}>
                 {meta.members.map((m) => <option key={m.steamid} value={m.steamid}>{m.name}</option>)}
               </select>
               <label title={ownershipKnown ? "Skip games this person doesn't own" : "Ownership unknown — this profile's game list isn't public"}
                 style={{ display: "flex", gap: 5, alignItems: "center", cursor: ownershipKnown ? "pointer" : "not-allowed", opacity: ownershipKnown ? 1 : 0.5 }}>
-                <input type="checkbox" checked={ownedOnly && ownershipKnown} disabled={!ownershipKnown}
+                <input type="checkbox" checked={ownedOnly && ownershipKnown} disabled={!ownershipKnown || spinning}
                   onChange={(e) => { setOwnedOnly(e.target.checked); setResult(null); }} />
                 Owned only
               </label>
               <label title={hasCentury ? "Only games on this person's Century list" : "No Century list yet — build one on the Century page"}
                 style={{ display: "flex", gap: 5, alignItems: "center", cursor: hasCentury ? "pointer" : "not-allowed", opacity: hasCentury ? 1 : 0.5 }}>
-                <input type="checkbox" checked={centuryOnly && hasCentury} disabled={!hasCentury}
+                <input type="checkbox" checked={centuryOnly && hasCentury} disabled={!hasCentury || spinning}
                   onChange={(e) => { setCenturyOnly(e.target.checked); setResult(null); }} />
                 My hundred only
               </label>
@@ -416,18 +519,6 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               </div>
             </div>
           )}
-          {false && result && !boundBy && mode !== "casual" && (
-            <div>
-              <div style={{ ...S.label, marginBottom: 6 }}>The wheel has chosen</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button style={S.btn} disabled={busy} onClick={accept}>
-                  {mode === "personal" ? "Sign the contract (1.5×)" : "Post the bounty (2×, everyone)"}
-                </button>
-                <button style={S.btnGhost} onClick={() => setResult(null)}>Coward's re-spin</button>
-              </div>
-              {mode === "public" && <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 10 }}>Posting a bounty needs the club key (it changes scoring for everyone).</p>}
-            </div>
-          )}
         </div>
       </div>
 
@@ -449,13 +540,22 @@ export default function Wheel({ stats, meta, mutate, busy, nav }) {
               ) : (
                 <span style={{ color: "var(--faint)" }}>✗ expired {fmtExpiry(c.expiry)}</span>
               )}
-              <button style={{ ...S.btnGhost, marginLeft: "auto" }} disabled={busy}
-                onClick={() => mutate("abandonContract", { id: c.id }, () => "Contract torn up")}>✕</button>
+              {Date.now() / 1000 < c.expiry ? (
+                // this week's contract: binding until Monday. The ✕ used to be
+                // a free re-spin (tear it up, spin again) — the server refuses
+                // it now too, this just stops the UI from offering it.
+                <span title="Signed this week — binding until Monday" style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 14 }}>🔒</span>
+              ) : (
+                <button style={{ ...S.btnGhost, marginLeft: "auto" }} disabled={busy}
+                  title="Remove this old contract from the ledger"
+                  onClick={() => mutate("abandonContract", { id: c.id }, () => "Contract torn up")}>✕</button>
+              )}
             </div>
           ))}
         </div>
         <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 12 }}>
           Contract points count on the main leaderboard AND the Contracts board. Overlapping multipliers don't stack — the highest wins.
+          Contracts signed this week are binding — no tear-ups, no second spins, until Monday.
         </p>
       </div>
     </div>
