@@ -573,3 +573,85 @@ export function suggestHuntAchievements(games, appids, perGame = 20) {
   }
   return picks;
 }
+
+// ---------------------------------------------------------------
+// projectQueue — the Future page's crystal ball.
+//
+// Walks a member's queue day by day: each day contributes weekday or
+// weekend hours; the active game's points burn at a constant
+// pool ÷ effectiveHours points per hour (so hours-left =
+// effHours × ptsLeft/pool — the "points share of median" model:
+// what shrinks the estimate is earning points, not logging hours).
+// When a game hits zero mid-day, the next game starts the same day
+// with the leftover hours.
+//
+// entries: [{ appid, name, ptsLeft, pool, effHours }] in queue order,
+//          pre-filtered to rated games with points remaining.
+// Returns:
+//   days        [{ t, appid, ptsEnd, done: [appid…], rest }]  (calendar cells)
+//   perGame     [{ …entry, estHours, startT, endT|null, series: [{t, pts}…] }]
+//   completions [{ appid, name, t, count }]
+//   truncated   horizon hit with games left
+//   idle        both paces are zero — nothing can ever finish
+// ---------------------------------------------------------------
+export function projectQueue({ entries, weekday, weekend, start = Date.now(), horizonDays = 730 }) {
+  const d0 = new Date(start); d0.setHours(0, 0, 0, 0);
+  const t0 = d0.getTime();
+  const isWknd = (t) => { const dow = new Date(t).getDay(); return dow === 0 || dow === 6; };
+  if (!(weekday > 0) && !(weekend > 0))
+    return { days: [], perGame: [], completions: [], truncated: false, idle: true };
+
+  const gs = entries.map((e) => ({
+    ...e,
+    rate: e.pool / e.effHours,                        // pts per hour, constant per game
+    estHours: (e.effHours * e.ptsLeft) / e.pool,      // hours-left today
+    rem: (e.effHours * e.ptsLeft) / e.pool,           // mutable countdown
+    startT: null, endT: null, series: [],
+  }));
+  const days = [], completions = [];
+  let i = 0, truncated = false;
+  if (gs.length) { gs[0].startT = t0; gs[0].series.push({ t: t0, pts: gs[0].ptsLeft }); }
+
+  for (let day = 0; i < gs.length; day++) {
+    if (day >= horizonDays) { truncated = true; break; }
+    // step by calendar days, not by 24h blocks — a projection that
+    // crosses a DST change must still key to true local midnights or
+    // the calendar grid can't find its own days.
+    const dd = new Date(d0); dd.setDate(d0.getDate() + day);
+    const de = new Date(d0); de.setDate(d0.getDate() + day + 1);
+    const dayT = dd.getTime(), dayEnd = de.getTime();
+    const budget = isWknd(dayT) ? weekend : weekday;
+    let h = budget;
+    const done = [];
+    while (h > 1e-9 && i < gs.length) {
+      const g = gs[i];
+      if (g.rem <= h + 1e-9) {
+        h -= g.rem;
+        // completion instant, placed proportionally through the day
+        const tC = dayT + Math.round(((budget - h) / budget) * (dayEnd - dayT));
+        g.rem = 0; g.endT = tC;
+        g.series.push({ t: tC, pts: 0 });
+        completions.push({ appid: g.appid, name: g.name, t: tC, count: completions.length + 1 });
+        done.push(g.appid);
+        i++;
+        if (i < gs.length) { const n = gs[i]; n.startT = tC; n.series.push({ t: tC, pts: n.ptsLeft }); }
+      } else {
+        g.rem -= h; h = 0;
+      }
+    }
+    const active = i < gs.length ? gs[i] : null;
+    // end-of-day sample — on rest days this repeats the value, which
+    // draws the plateau honestly instead of hiding it.
+    if (active) active.series.push({ t: dayEnd, pts: active.rem * active.rate });
+    days.push({
+      t: dayT,
+      appid: active?.appid ?? null,
+      ptsEnd: active ? Math.round(active.rem * active.rate) : 0,
+      done,
+      rest: budget <= 0,
+    });
+    if (!active) break;
+  }
+  const perGame = gs.map(({ rem, rate, ...g }) => g);
+  return { days, perGame, completions, truncated, idle: false };
+}
