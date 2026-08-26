@@ -385,8 +385,15 @@ export default async function handler(req, res) {
         const del = await supabase.from("queue").delete().eq("steamid", sid);
         if (del.error) return fail(500, del.error.message);
         if (appids.length) {
-          const ins = await supabase.from("queue")
-            .insert(appids.map((appid, idx) => ({ steamid: sid, appid, position: idx })));
+          // per-game colors ride along (v15): #rrggbb or null = default palette
+          const hexOk = (c) => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
+          const rows = appids.map((appid, idx) => ({
+            steamid: sid, appid, position: idx,
+            color: hexOk(body.colors?.[appid]) ? body.colors[appid] : null,
+          }));
+          let ins = await supabase.from("queue").insert(rows);
+          if (ins.error && /color/i.test(ins.error.message))   // pre-v15 DB: save without colors
+            ins = await supabase.from("queue").insert(rows.map(({ color, ...r }) => r));
           if (ins.error) return fail(500, ins.error.message);
         }
         return res.status(200).json({ ok: true });
