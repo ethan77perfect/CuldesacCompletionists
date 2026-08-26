@@ -655,3 +655,61 @@ export function projectQueue({ entries, weekday, weekend, start = Date.now(), ho
   const perGame = gs.map(({ rem, rate, ...g }) => g);
   return { days, perGame, completions, truncated, idle: false };
 }
+
+// ---------------------------------------------------------------
+// chartChunks — split a projectQueue result into chart panels.
+// One panel when the plan spans ≤ ~7 months; half-year panels after
+// that (boundaries at +6mo, +12mo… from the start — always local
+// midnights, which every active game has a sample at). Each panel
+// carries its recharts rows (per-game sawtooth keys g<appid> + the
+// "done" completions step held across the whole panel), month-start
+// ticks, and poster anchors (games starting in the panel, plus the
+// one carried over the left boundary at its boundary value).
+// ---------------------------------------------------------------
+export function chartChunks(proj, basePerfects = 0) {
+  if (!proj.perGame.length || !proj.days.length) return [];
+  const DAY = 86400000;
+  const addMonths = (t, n) => { const d = new Date(t); d.setMonth(d.getMonth() + n); return d.getTime(); };
+
+  const rowsAll = [];
+  for (const g of proj.perGame)
+    for (const pt of g.series) rowsAll.push({ t: pt.t, [`g${g.appid}`]: Math.round(pt.pts) });
+  rowsAll.sort((a, b) => a.t - b.t);
+  const t0 = proj.days[0].t;
+  const lastT = rowsAll[rowsAll.length - 1].t;
+  const doneAt = (t) => basePerfects + proj.completions.filter((c) => c.t <= t).length;
+
+  const bounds = [t0];
+  if (lastT - t0 > 215 * DAY)
+    for (let k = 6; addMonths(t0, k) < lastT; k += 6) bounds.push(addMonths(t0, k));
+  bounds.push(lastT);
+
+  return bounds.slice(0, -1).map((a, bi) => {
+    const b = bounds[bi + 1];
+    const rows = rowsAll.filter((r) => r.t >= a && r.t <= b);
+    rows.push({ t: a, done: doneAt(a) });
+    for (const c of proj.completions) if (c.t > a && c.t <= b) rows.push({ t: c.t, done: basePerfects + c.count });
+    rows.push({ t: b, done: doneAt(b) });
+    rows.sort((x, y) => x.t - y.t);
+
+    const ticks = [];
+    const d = new Date(a); d.setDate(1); d.setHours(0, 0, 0, 0);
+    for (let m = 0; ; m++) {
+      const tm = addMonths(d.getTime(), m);
+      if (tm > b) break;
+      if (tm >= a) ticks.push(tm);
+    }
+    if (!ticks.length) ticks.push(a, b);   // stub panels shorter than a month
+
+    const posters = proj.perGame
+      .filter((g) => g.startT >= a && g.startT < b)
+      .map((g) => ({ appid: g.appid, name: g.name, t: g.startT, pts: g.ptsLeft }));
+    const carried = proj.perGame.find((g) => g.startT < a && (g.endT == null || g.endT > a));
+    if (carried) {
+      const sample = rowsAll.find((r) => r.t === a && r[`g${carried.appid}`] != null);
+      if (sample && sample[`g${carried.appid}`] > 0)
+        posters.unshift({ appid: carried.appid, name: carried.name, t: a, pts: sample[`g${carried.appid}`] });
+    }
+    return { a, b, rows, ticks, posters };
+  });
+}
