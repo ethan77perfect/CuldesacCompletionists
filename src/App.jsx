@@ -36,6 +36,7 @@ import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
 import Century from "./components/Century.jsx";
 import Burndown from "./components/Burndown.jsx";
+import Future from "./components/Future.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import Bingo from "./components/Bingo.jsx";
@@ -71,7 +72,7 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["challenges", "Challenges"],
+  ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["future", "Future"], ["challenges", "Challenges"],
   ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
@@ -426,6 +427,7 @@ export default function App() {
         {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "century" && <Century stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "burndown" && <Burndown stats={stats} meta={meta} history={history} nav={nav} cfg={cfg} />}
+        {stats && !empty && page === "future" && <Future stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "bingo" && <Bingo stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
