@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -95,6 +95,7 @@ export default async function handler(req, res) {
         supabase.from("bingo_rounds").select("*").order("created_at"),
         supabase.from("bingo_cards").select("*"),
         supabase.from("completions").select("*"),
+        supabase.from("queue").select("*").order("position"),
       ]);
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
@@ -118,6 +119,7 @@ export default async function handler(req, res) {
         bingoRounds: bingoRounds.error ? [] : (bingoRounds.data ?? []),   // tolerate pre-v9 DBs
         bingoCards: bingoCards.error ? [] : (bingoCards.data ?? []),      // tolerate pre-v9 DBs
         completions: completions.error ? [] : (completions.data ?? []),   // tolerate pre-v13 DBs
+        queue: queue.error ? [] : (queue.data ?? []),                     // tolerate pre-v14 DBs
       });
     }
 
@@ -361,6 +363,39 @@ export default async function handler(req, res) {
           .eq("id", Number(body.id)).neq("status", "offered").select("id");
         if (d.error) return fail(500, d.error.message);
         if (!(d.data ?? []).length) return fail(409, "Contract already gone — refresh the page");
+        return res.status(200).json({ ok: true });
+      }
+      // ---- the Future page (v14) ----
+      case "saveFuture": {
+        // One op saves the whole page: the member's play pace AND their
+        // queue. The queue is wholesale-replaced — the client sends the
+        // full ordered appid list, position = array index. (Ordering by
+        // diffing rows is where reorder bugs live; a 12-row delete +
+        // insert is nothing.)
+        const sid = String(body.steamid || "");
+        if (!sid) return fail(400, "steamid required");
+        const wd = Math.min(24, Math.max(0, Number(body.weekday) || 0));
+        const we = Math.min(24, Math.max(0, Number(body.weekend) || 0));
+        const upd = await supabase.from("members")
+          .update({ play_weekday: wd, play_weekend: we })
+          .eq("steamid", sid).select("steamid");
+        if (upd.error) return fail(500, upd.error.message);
+        if (!(upd.data ?? []).length) return fail(404, "No such member");
+        const appids = [...new Set((body.appids ?? []).map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+        const del = await supabase.from("queue").delete().eq("steamid", sid);
+        if (del.error) return fail(500, del.error.message);
+        if (appids.length) {
+          // per-game colors ride along (v15): #rrggbb or null = default palette
+          const hexOk = (c) => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
+          const rows = appids.map((appid, idx) => ({
+            steamid: sid, appid, position: idx,
+            color: hexOk(body.colors?.[appid]) ? body.colors[appid] : null,
+          }));
+          let ins = await supabase.from("queue").insert(rows);
+          if (ins.error && /color/i.test(ins.error.message))   // pre-v15 DB: save without colors
+            ins = await supabase.from("queue").insert(rows.map(({ color, ...r }) => r));
+          if (ins.error) return fail(500, ins.error.message);
+        }
         return res.status(200).json({ ok: true });
       }
       // ---- monthly hunts ----
