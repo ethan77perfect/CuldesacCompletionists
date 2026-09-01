@@ -1,97 +1,34 @@
 // ---------------------------------------------------------------
 // Bingo.jsx — "#/bingo": Achievement Bingo.
 //
-// Each member gets a personal 5×5 card (center FREE) drawn from
-// their OWN owned club games — 24 achievements they haven't earned,
-// library-scoped like Burndown, so every card is fair by
-// construction. Unlocks mark squares automatically: the deal is
-// stored in Supabase, but marking is computed live from Steam data
-// on every load — no honor system, no cron involvement.
+// Each member gets a personal 5×5 card (center FREE) drawn from just
+// CARD_GAMES of their OWN owned club games — 24 achievements they
+// haven't earned, so a card is chased in a handful of installs, not
+// a dozen. Game pick is difficulty-balanced (≤1 bruiser, ≥1 comfort
+// game when the library has one); rarity bands (2 rare / 6 mid /
+// 16 common) shape the draw inside the chosen games; the two rarest
+// land on corners. Unlocks mark squares automatically: the deal is
+// stored in Supabase, marking is computed live from Steam data on
+// every load — no honor system, no cron involvement.
+// Members whose total eligible pool is under 24 sit the round out.
 //
-// Deal composition per card: 2 rare (<2%), 6 mid (2–8%), 16 common
-// (≥8%), shortfalls backfilled from whatever the pool has; max 4
-// squares per game so one title can't own the card; the two rarest
-// draws land on corners (drama). Provisional (⏳ 0.0%) achievements
-// are excluded, consistent with hunts and the hall of fame.
-// Members whose eligible pool is under 24 sit the round out — with
-// a card too small to bingo, the only move left is to flex. 🏆
-//
-// One round lives at a time. Deleting a round cascades its cards
-// (see migration-v9.sql). Rounds are glory-only for now — bingo
-// does not touch the main leaderboard.
+// Rounds ACCUMULATE now: dealing a new round keeps the old ones,
+// and the Trophy Room derives each past round's first-line winner
+// from unlock timestamps (deriveBingoWinners below). Deleting a
+// round is the only way history is lost (cards cascade,
+// migration-v9). Rounds are glory-only — bingo never touches the
+// main leaderboard.
 // ---------------------------------------------------------------
 import { useMemo, useState } from "react";
 import { S, fmtDate } from "./ui.jsx";
 import { tierOf } from "../lib/stats.js";
-
-// 12 possible lines on a 5×5 board (slot 12 = FREE center)
-const LINES = [];
-for (let r = 0; r < 5; r++) LINES.push([0, 1, 2, 3, 4].map((c) => r * 5 + c));
-for (let c = 0; c < 5; c++) LINES.push([0, 1, 2, 3, 4].map((r) => r * 5 + c));
-LINES.push([0, 6, 12, 18, 24], [4, 8, 12, 16, 20]);
-
-const keyOf = (c) => `${c.appid}|${c.achid}`;
-const shuffle = (arr) => {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-};
-
-// ---- the deal: 24 uncompleted achievements from games YOU own ----
-export function dealCards(stats, meta) {
-  const cards = [], benched = [];
-  for (const m of meta.members) {
-    const pt = stats.profilesPlaytime?.[m.steamid] ?? {};
-    const known = Object.keys(pt).length > 0;   // empty map = fetch failed, not "owns nothing"
-    const pool = [];
-    for (const g of stats.games) {
-      const mine = g.players[m.steamid] || (known && pt[g.appid] !== undefined);
-      if (!mine) continue;
-      const p = g.players[m.steamid];
-      if (p?.complete) continue;
-      const have = new Set((p?.unlocks ?? []).map((u) => u.id));
-      for (const a of g.ach) {
-        if (a.pct <= 0 || have.has(a.id)) continue;   // provisional or already earned
-        pool.push({ appid: g.appid, achid: a.id, ach: a.name, game: g.name, pct: a.pct });
-      }
-    }
-    if (pool.length < 24) { benched.push(m.steamid); continue; }
-
-    const rare = shuffle(pool.filter((c) => c.pct < 2));
-    const mid = shuffle(pool.filter((c) => c.pct >= 2 && c.pct < 8));
-    const common = shuffle(pool.filter((c) => c.pct >= 8));
-    const picked = [], counts = new Map();
-    const take = (bucket, n, cap = 4) => {
-      for (const c of bucket) {
-        if (picked.length >= 24 || n <= 0) return;
-        if (picked.includes(c) || (counts.get(c.appid) ?? 0) >= cap) continue;
-        picked.push(c); counts.set(c.appid, (counts.get(c.appid) ?? 0) + 1); n--;
-      }
-    };
-    take(rare, 2); take(mid, 6); take(common, 16);
-    take(shuffle([...pool]), 24 - picked.length);        // backfill, cap held
-    take(shuffle([...pool]), 24 - picked.length, 99);    // last resort: cap can make 24 unreachable
-    if (picked.length < 24) { benched.push(m.steamid); continue; }
-
-    // rarest two on corners; everything else shuffled into the rest
-    picked.sort((a, b) => a.pct - b.pct);
-    const [r1, r2, ...rest] = picked;
-    const cells = new Array(24);
-    const corners = shuffle([0, 4, 19, 23]);             // cell indices of the grid corners
-    cells[corners[0]] = r1; cells[corners[1]] = r2;
-    const open = shuffle([...Array(24).keys()].filter((i) => cells[i] === undefined));
-    shuffle(rest).forEach((c, k) => { cells[open[k]] = c; });
-    cards.push({ steamid: m.steamid, cells });
-  }
-  return { cards, benched };
-}
+import { LINES, keyOf, CARD_GAMES, dealCards } from "../lib/bingo.js";
 
 export default function Bingo({ stats, meta, mutate, busy, nav }) {
   const monthLabel = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const [label, setLabel] = useState(monthLabel);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [newRound, setNewRound] = useState(false);   // deal a fresh round; past rounds stay for the Trophy Room
   const round = (meta.bingoRounds ?? [])[Math.max(0, (meta.bingoRounds ?? []).length - 1)] ?? null;
   const cards = useMemo(() =>
     (meta.bingoCards ?? []).filter((c) => c.round_id === round?.id), [meta, round]);
@@ -137,6 +74,7 @@ export default function Bingo({ stats, meta, mutate, busy, nav }) {
     if (!dealt.length) return;   // mutate's error surface handles server-side; nothing to deal is visible below
     await mutate("dealBingo", { label, cards: dealt },
       (j) => `Dealt ${j.dealt} card${j.dealt > 1 ? "s" : ""} — ${label}. Marks update themselves.`);
+    setNewRound(false);
   };
   const remove = async () => {
     setConfirmDelete(false);
@@ -147,13 +85,14 @@ export default function Bingo({ stats, meta, mutate, busy, nav }) {
     <div style={{ display: "grid", gap: 14 }}>
       <div className="panel" style={{ ...S.panel, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <span style={S.label}>Bingo</span>
-        {round ? (
+        {round && !newRound ? (
           <>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{round.label}</span>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              dealt {fmtDate(Date.parse(round.created_at) / 1000)} · marks update live from Steam
+              dealt {fmtDate(Date.parse(round.created_at) / 1000)} · marks update live from Steam · past rounds hang in the Trophy Room
             </span>
             <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button style={S.btnGhost} disabled={busy} onClick={() => setNewRound(true)}>New round</button>
               {confirmDelete ? (
                 <>
                   <button style={{ ...S.btnGhost, color: "var(--err-border)", borderColor: "var(--err-border)" }}
@@ -161,20 +100,21 @@ export default function Bingo({ stats, meta, mutate, busy, nav }) {
                   <button style={S.btnGhost} onClick={() => setConfirmDelete(false)}>Keep it</button>
                 </>
               ) : (
-                <button style={S.btnGhost} disabled={busy} onClick={() => setConfirmDelete(true)}>Delete round</button>
+                <button style={{ ...S.btnGhost, color: "var(--faint)" }} disabled={busy} onClick={() => setConfirmDelete(true)}>Delete (erases its history)</button>
               )}
             </span>
           </>
         ) : (
           <>
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              25 squares, center free. Every card is drawn from that member's own owned games —
-              achievements they haven't earned. Unlocks mark squares automatically. Lines are glory; blackout is legend.
+              25 squares, center free. Each card draws from just {CARD_GAMES} of that member's own owned games —
+              achievements they haven't earned, difficulty-balanced. Unlocks mark squares automatically. Lines are glory; blackout is legend.
             </span>
             <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
               <input style={{ ...S.input, width: 160 }} value={label} onChange={(e) => setLabel(e.target.value)}
                 placeholder={monthLabel} />
               <button style={S.btn} disabled={busy} onClick={deal}>Deal the cards</button>
+              {round && <button style={S.btnGhost} onClick={() => setNewRound(false)}>Back</button>}
             </span>
           </>
         )}

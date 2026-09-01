@@ -13,10 +13,10 @@
 // are their OWN economy — they never touch the main leaderboard.
 // ---------------------------------------------------------------
 import { useMemo, useState } from "react";
-import { computeHunt, suggestHuntAchievements } from "../lib/stats.js";
+import { computeHunt, suggestHuntAchievements, monthKey, HUNT_FOCUS_WEIGHTS } from "../lib/stats.js";
 import { S, TierChip, fmtDate } from "./ui.jsx";
 
-const thisMonth = () => new Date().toISOString().slice(0, 7);
+const thisMonth = () => monthKey(Date.now() / 1000);   // club clock, not the viewer's
 
 export default function Hunt({ stats, meta, mutate, busy, nav }) {
   const [tab, setTab] = useState("current");
@@ -88,6 +88,35 @@ function ActiveHunt({ hunt, stats, meta, mutate, busy, nav }) {
           </button>
         </div>
       </div>
+
+      {(() => {   // FOCUS SCORING: each player's per-game portfolio, weights visible
+        const withPts = result.standings.filter((s) => s.portfolio?.length);
+        if (!withPts.length) return null;
+        const wPct = (w) => `${Math.round(w * 100)}%`;
+        return (
+          <div className="panel" style={S.panel}>
+            <div style={{ ...S.label, marginBottom: 4 }}>Focus scoring</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+              Your best game counts {wPct(HUNT_FOCUS_WEIGHTS[0])}; each next game counts less
+              ({HUNT_FOCUS_WEIGHTS.map(wPct).join(" / ")}). Depth beats scatter — finish games, don't graze them.
+            </div>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+              {withPts.map((s) => (
+                <div key={s.sid} style={{ display: "grid", gap: 3 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: color(s.sid) }}>{name(s.sid)}</div>
+                  {s.portfolio.map((row) => (
+                    <div key={row.appid} style={{ display: "flex", gap: 6, fontSize: 12, alignItems: "baseline" }}>
+                      <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--muted)" }}>{row.gameName}</span>
+                      <span style={{ color: "var(--faint)" }}>{row.raw} × {wPct(row.weight)} =</span>
+                      <span style={{ ...S.display, fontWeight: 700, color: "var(--accent)" }}>{Math.round(row.weighted)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {Object.entries(byGame).map(([gName, achs]) => (
         <div key={gName} className="panel" style={S.panel}>

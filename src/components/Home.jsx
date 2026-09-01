@@ -41,7 +41,9 @@ export default function Home({ stats, nav }) {
             ))}
           </span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
-            — took {stats.reigning.label}. The crown is defended on the leaderboard's month tab.
+            — took {stats.reigning.label}. The crown is defended on the leaderboard's month tab;{" "}
+            <span style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
+              onClick={() => nav("/trophies")}>the full Trophy Room awaits</span>.
           </span>
         </div>
       )}

@@ -36,6 +36,7 @@
 import { useMemo, useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { S, PctBar } from "./ui.jsx";
+import { monthKey } from "../lib/stats.js";
 import { chartInk } from "../lib/themes.js";
 
 const WEEK = 7 * 86400, MONTH30 = 30 * 86400;
@@ -85,8 +86,8 @@ export default function Burndown({ stats, meta, history = [], nav, cfg }) {
     const recent = stats.events.filter((e) => e.kind === "unlock" && e.sid === m.steamid && e.t >= now - MONTH30).length;
     const weekly = recent / (MONTH30 / WEEK);
     const remaining = totalAch - unlocked;
-    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-    const burnedThisMonth = stats.events.filter((e) => e.kind === "unlock" && e.sid === m.steamid && e.t >= monthStart.getTime() / 1000).length;
+    const nowKey = monthKey(Date.now() / 1000);   // club clock — same boundary the crowns use
+    const burnedThisMonth = stats.events.filter((e) => e.kind === "unlock" && e.sid === m.steamid && monthKey(e.t) === nowKey).length;
     return {
       sid: m.steamid, name: m.name, color: m.color,
       libSize: mine.length, untouched, totalAch, unlocked, remaining,

@@ -8,9 +8,23 @@
 import { pointTable, buildDifficultyCurve } from "./scoring.js";
 
 const DAY = 86400;
-const monthKey = (t) => {
-  const d = new Date(t * 1000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+// THE CLUB CLOCK: months are bucketed in the club's timezone for every
+// viewer, not the browser's. Before this, monthKey used local getMonth —
+// so an unlock at 11:45pm Eastern on Aug 31 counted for August on an
+// Eastern screen and for SEPTEMBER on a UTC-ish one, and two members
+// could see different monthly champions. Same principle as the cron's
+// en-CA snapshot dates: club time is the truth everywhere.
+const CLUB_TZ = "America/New_York";
+const monthFmt = new Intl.DateTimeFormat("en-CA", { timeZone: CLUB_TZ, year: "numeric", month: "2-digit" });
+// Memo per hour bucket: a club-TZ month boundary always lands on a whole
+// hour (NY offsets are -4/-5), so every epoch inside one UTC hour shares
+// a month key — turns ~100k Intl calls into a few thousand.
+const monthMemo = new Map();
+export const monthKey = (t) => {
+  const h = Math.floor(t / 3600);
+  let k = monthMemo.get(h);
+  if (k === undefined) { k = monthFmt.format(new Date(t * 1000)); monthMemo.set(h, k); }
+  return k;
 };
 // ISO-8601 week label ("2026-W31") — used for streak tracking. The
 // UTC+Thursday dance is the standard trick for ISO week numbering.
@@ -23,10 +37,8 @@ const isoWeek = (t) => {
   const wk = Math.ceil(((day - y0) / 86400000 + 1) / 7);
   return `${day.getUTCFullYear()}-W${String(wk).padStart(2, "0")}`;
 };
-export const monthLabelOf = (date = new Date()) =>
-  date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-const monthStart = (date = new Date()) =>
-  new Date(date.getFullYear(), date.getMonth(), 1).getTime() / 1000;
+export const monthLabelOf = () =>
+  new Date().toLocaleDateString(undefined, { timeZone: CLUB_TZ, month: "long", year: "numeric" });
 
 // The club's recorded era: one crown per finished calendar month, from
 // here forward. Unlocks before this still count all-time — there are
@@ -211,7 +223,7 @@ export function buildClubStats(clubData, meta, settings) {
   events.sort((a, b) => a.t - b.t);
 
   // ---- totals, month, streaks ----
-  const monthCut = monthStart();
+  const thisMonth = monthKey(Date.now() / 1000);   // club clock, same key the crowns use
   const perPlayer = Object.fromEntries(members.map((m) => [m.steamid, {
     ...m, avatar: profiles[m.steamid]?.avatar ?? null,
     points: 0, monthPoints: 0, monthUnlocks: 0, perfects: 0, started: 0,
@@ -225,7 +237,7 @@ export function buildClubStats(clubData, meta, settings) {
       p.contractPts = (p.contractPts ?? 0) + e.pts;
       if (e.kind === "unlock") p.contractKills = (p.contractKills ?? 0) + 1;
     }
-    if (e.t >= monthCut) { p.monthPoints += e.pts; if (e.kind === "unlock") p.monthUnlocks += 1; }
+    if (monthKey(e.t) === thisMonth) { p.monthPoints += e.pts; if (e.kind === "unlock") p.monthUnlocks += 1; }
     p.weeks.add(isoWeek(e.t));
     if (e.kind === "unlock" && e.pioneer) p.pioneerCount = (p.pioneerCount ?? 0) + 1;
     if (e.kind === "unlock" && !e.provisional && e.pct > 0 && (!p.rarestUnlock || e.pct < p.rarestUnlock.pct)) p.rarestUnlock = e;
@@ -503,15 +515,29 @@ export function buildClubStats(clubData, meta, settings) {
 // credit (base × veteranCredit, default 0.6) and does not occupy
 // a place slot — history is rewarded, the podium stays live.
 // ---------------------------------------------------------------
+// FOCUS SCORING: each player's hunt games are ranked by their own raw
+// totals; rank 1 counts full, each next game counts less. Rewards
+// finishing a couple of games deep over scatter-shotting all five, and
+// softens the big-library edge (your 5th-best game is worth 40%).
+// The assignment is automatic (biggest total × biggest weight — the
+// provably maximal pairing), so capturing can never LOWER your score.
+// Past hunts are untouched: finished hunts store frozen `final`
+// standings; this only shapes live computation from here on.
+export const HUNT_FOCUS_WEIGHTS = [1, 0.85, 0.7, 0.55, 0.4];
+
 export function computeHunt(hunt, games, members, cfg = {}) {
   const PLACE = [1, 0.8, 0.6, 0.4];
   const vet = cfg.veteranCredit ?? 0.6;
-  const [y, m] = hunt.month.split("-").map(Number);
-  const start = new Date(y, m - 1, 1).getTime() / 1000;
-  const end = new Date(y, m, 1).getTime() / 1000;
+  const weights = Array.isArray(cfg.huntFocusWeights) && cfg.huntFocusWeights.length
+    ? cfg.huntFocusWeights : HUNT_FOCUS_WEIGHTS;
+  // Club clock here too: "inside the hunt month" is decided by the same
+  // club-TZ monthKey as the crowns — "YYYY-MM" strings compare
+  // lexicographically, so before/inside/after is just <, ===, >.
 
   const gameById = Object.fromEntries(games.map((g) => [Number(g.appid), g]));
-  const totals = Object.fromEntries(members.map((mm) => [mm.steamid, { pts: 0, captures: 0, veteran: 0 }]));
+  const totals = Object.fromEntries(members.map((mm) => [mm.steamid, { captures: 0, veteran: 0 }]));
+  const byGameRaw = Object.fromEntries(members.map((mm) => [mm.steamid, {}]));   // sid -> { appid -> raw pts }
+  const addRaw = (sid, appid, pts) => { byGameRaw[sid][appid] = (byGameRaw[sid][appid] ?? 0) + pts; };
 
   const board = hunt.achievements.map((a) => {
     const g = gameById[Number(a.appid)];
@@ -520,28 +546,40 @@ export function computeHunt(hunt, games, members, cfg = {}) {
       const u = g?.players[mm.steamid]?.unlocks.find((x) => x.id === a.id);
       if (u?.t) rows.push({ sid: mm.steamid, t: u.t });
     }
-    const veterans = rows.filter((r) => r.t < start);
-    const racers = rows.filter((r) => r.t >= start && r.t < end).sort((x, z) => x.t - z.t);
+    const veterans = rows.filter((r) => monthKey(r.t) < hunt.month);
+    const racers = rows.filter((r) => monthKey(r.t) === hunt.month).sort((x, z) => x.t - z.t);
     const results = [];
     for (const v of veterans) {
       const pts = Math.round(a.base * vet);
-      totals[v.sid].pts += pts; totals[v.sid].veteran += 1;
+      addRaw(v.sid, a.appid, pts); totals[v.sid].veteran += 1;
       results.push({ sid: v.sid, place: "vet", pts, t: v.t });
     }
     racers.forEach((r, i) => {
       const mult = PLACE[i] ?? 0.2;
       const pts = Math.round(a.base * mult);
-      totals[r.sid].pts += pts;
+      addRaw(r.sid, a.appid, pts);
       if (i === 0) totals[r.sid].captures += 1;
       results.push({ sid: r.sid, place: i + 1, pts, t: r.t });
     });
     return { ...a, gameName: g?.name ?? `App ${a.appid}`, results };
   });
 
-  const standings = members
-    .map((mm) => ({ sid: mm.steamid, ...totals[mm.steamid] }))
-    .sort((x, z) => z.pts - x.pts);
-  return { board, standings, start, end, winner: standings[0]?.pts > 0 ? standings[0].sid : null };
+  // Portfolio: sort each player's per-game raw totals descending, weight
+  // by rank (ranks past the table clamp to the last weight). Board chips
+  // keep RAW place points; the discount lives at the standings level,
+  // and the portfolio rows make it legible.
+  const standings = members.map((mm) => {
+    const portfolio = Object.entries(byGameRaw[mm.steamid])
+      .map(([appid, raw]) => ({ appid: Number(appid), gameName: gameById[Number(appid)]?.name ?? `App ${appid}`, raw }))
+      .sort((x, z) => z.raw - x.raw || x.appid - z.appid)
+      .map((row, i) => {
+        const weight = weights[Math.min(i, weights.length - 1)];
+        return { ...row, weight, weighted: row.raw * weight };
+      });
+    const pts = Math.round(portfolio.reduce((s, row) => s + row.weighted, 0));
+    return { sid: mm.steamid, pts, ...totals[mm.steamid], portfolio };
+  }).sort((x, z) => z.pts - x.pts);
+  return { board, standings, winner: standings[0]?.pts > 0 ? standings[0].sid : null };
 }
 
 // Suggested hunt slate: mostly "important" (rarity as proxy — big
