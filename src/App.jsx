@@ -36,6 +36,7 @@ import Backlog from "./components/Backlog.jsx";
 import Wheel from "./components/Wheel.jsx";
 import Century from "./components/Century.jsx";
 import Burndown from "./components/Burndown.jsx";
+import Future from "./components/Future.jsx";
 import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import Bingo from "./components/Bingo.jsx";
@@ -71,7 +72,7 @@ function useRoute() {
 
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
-  ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["challenges", "Challenges"],
+  ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["future", "Future"], ["challenges", "Challenges"],
   ["stats", "Stats"], ["compare", "Compare"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
@@ -393,6 +394,23 @@ export default function App() {
             </div>
           );
         })()}
+        {(() => {   // DATA HEALTH: members whose library list is riding on an old ownership fetch.
+          // ownedAt = last time GetOwnedGames genuinely answered for them; failed/empty
+          // fetches carry the previous library forward instead of wiping it (lib/clubSync.js),
+          // and this strip is where that carrying stops being silent. Payloads that predate
+          // ownedAt simply don't warn.
+          const nowSec = Date.now() / 1000;
+          const stale = Object.entries(clubData?.profiles ?? {})
+            .filter(([, p]) => p?.ownedAt !== undefined && Object.keys(p?.playtime ?? {}).length > 0
+              && nowSec - (p.ownedAt || nowSec) > 36 * 3600)
+            .map(([sid]) => (meta?.members ?? []).find((m) => m.steamid === sid)?.name ?? sid);
+          return stale.length > 0 && (
+            <div className="panel" style={{ ...S.panel, marginBottom: 14, padding: "8px 14px", fontSize: 12, color: "var(--muted)" }}>
+              📚 Library list carried from the last good fetch for {stale.join(", ")}
+              <span style={{ color: "var(--faint)" }}> — Steam hasn't confirmed their owned games in over a day, so the site is showing the last known library. Usually throttling; if it persists, check that their Steam privacy has "Game details" set to Public.</span>
+            </div>
+          );
+        })()}
         {loadProgress && (
           <div className="panel" style={{ ...S.panel, marginBottom: 14, fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 12 }}>
             <span>Syncing with Steam… {Math.min(loadProgress.done * 12, (meta?.games?.length ?? 0))} / {meta?.games?.length ?? 0} games</span>
@@ -426,6 +444,7 @@ export default function App() {
         {stats && !empty && page === "wheel" && <Wheel stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "century" && <Century stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "burndown" && <Burndown stats={stats} meta={meta} history={history} nav={nav} cfg={cfg} />}
+        {stats && !empty && page === "future" && <Future stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "bingo" && <Bingo stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}

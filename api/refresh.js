@@ -111,7 +111,7 @@ export default async function handler(req, res) {
   }
 
   const clubIds = new Set(appids.map(Number));
-  let { payload, gotIds } = mergePayload(prevPayload, fetched, clubIds, nowEpoch);
+  let { payload, gotIds, carried } = mergePayload(prevPayload, fetched, clubIds, nowEpoch);
   payload.recentAppids = recentAppids; payload.recentCheckedAt = recentCheckedAt;
 
   // ---- discoveries: pioneers + announcements, per-game watermarks ----
@@ -143,7 +143,7 @@ export default async function handler(req, res) {
     if (covered.size) {
       ann = { ...ann, embeds: [], pioneerInserts: ann.pioneerInserts.filter((p) => !covered.has(Number(p.appid))) };
     }
-    ({ payload } = mergePayload(prevRow?.payload ?? null, fetched, clubIds, nowEpoch));
+    ({ payload, carried } = mergePayload(prevRow?.payload ?? null, fetched, clubIds, nowEpoch));
     payload.announceWatermark = { ...payload.announceWatermark, ...ann.watermark };
     payload.recentAppids = recentAppids; payload.recentCheckedAt = recentCheckedAt;
     wrote = await casWriteCache(db, prevRow, payload);
@@ -163,6 +163,7 @@ export default async function handler(req, res) {
   const staleRemaining = Math.max(0, staleCount - gotIds.size);
   return res.status(200).json({
     ok: true, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
+    ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0,
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
   });
 }

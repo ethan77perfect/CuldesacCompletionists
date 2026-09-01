@@ -128,9 +128,37 @@ export default async function handler(req, res) {
   const merged = mergePayload(prevPayload0, fetched, clubIds, nowEpoch);
   const gotIds = merged.gotIds;
   const data = merged.payload;
+  const carried = merged.carried ?? { owned: [], players: 0 };
   data.failed = fetched.failed;
 
-  // ---- 3. write cache + snapshot rows ----
+  // ---- 3. discoveries: pioneers + completion/rare embeds ----
+  // Shared with /api/refresh: per-game announce watermarks mean a
+  // perfect the 2pm refresh already posted is invisible to this run.
+  // Runs BEFORE the cache write (mirroring /api/refresh) so the
+  // advanced watermarks actually land in the persisted payload — they
+  // used to be stamped after the write and silently dropped, which let
+  // a later refresh re-announce rares this run had already posted. It
+  // also puts `ann` in scope for the CAS-retry path below, which
+  // referenced it before its declaration (a crash waiting on a race).
+  const existingPio = await db.from("pioneers").select("steamid, appid, achid");
+  const existingComp = await db.from("completions").select("steamid, appid");
+  const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
+  const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
+  const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
+  const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
+  const gameName = Object.fromEntries((gamesList.data ?? []).map((g) => [g.appid, g.name]));
+  const ann = diffAnnouncements({
+    prevPayload: prevPayload0, fetchedGames: fetched.games, nowEpoch,
+    nameOf, gameName,
+    rarePct: settingsRow.data?.data?.notifyRarePct ?? 1.0,
+    pioneerPct: settingsRow.data?.data?.pioneerPct ?? 1.0,
+    existingPioneerKeys, pioneerFirstScan,
+    profiles: data.profiles,
+    existingCompletionKeys,
+  });
+  data.announceWatermark = { ...data.announceWatermark, ...ann.watermark };
+
+  // ---- 4. write cache + snapshot rows ----
   // Club-local date, not UTC: the 10pm Eastern run is 02:00–03:00 UTC
   // *tomorrow*, so toISOString() stamped every snapshot one day ahead of
   // the evening it captured. en-CA formats as YYYY-MM-DD directly.
@@ -156,27 +184,6 @@ export default async function handler(req, res) {
     if (rowWrite.error)
       return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
   }
-
-  // ---- 3.5 discoveries: pioneers + completion/rare embeds ----
-  // Shared with /api/refresh: per-game announce watermarks mean a
-  // perfect the 2pm refresh already posted is invisible to this run.
-  const existingPio = await db.from("pioneers").select("steamid, appid, achid");
-  const existingComp = await db.from("completions").select("steamid, appid");
-  const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
-  const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
-  const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
-  const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
-  const gameName = Object.fromEntries((gamesList.data ?? []).map((g) => [g.appid, g.name]));
-  const ann = diffAnnouncements({
-    prevPayload: prevPayload0, fetchedGames: fetched.games, nowEpoch,
-    nameOf, gameName,
-    rarePct: settingsRow.data?.data?.notifyRarePct ?? 1.0,
-    pioneerPct: settingsRow.data?.data?.pioneerPct ?? 1.0,
-    existingPioneerKeys, pioneerFirstScan,
-    profiles: data.profiles,
-    existingCompletionKeys,
-  });
-  data.announceWatermark = { ...data.announceWatermark, ...ann.watermark };
   if (ann.completionInserts.length)
     await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
   if (ann.pioneerInserts.length) {
@@ -220,10 +227,13 @@ export default async function handler(req, res) {
   if (webhook && embeds.length && !quiet) await postDiscord(webhook, embeds);
 
   const STALE_AFTER = 20 * 3600;   // "fresh" = fetched within ~a day
-  const staleRemaining = appids.filter((a) => (gameFetchedAt[a] ?? 0) < nowEpoch - STALE_AFTER).length;
+  // data.gameFetchedAt, not a bare gameFetchedAt: the bare name was a
+  // ReferenceError that 500'd every run AFTER its work was done.
+  const staleRemaining = appids.filter((a) => (data.gameFetchedAt[a] ?? 0) < nowEpoch - STALE_AFTER).length;
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
+    ownedCarried: carried.owned, playersCarried: carried.players,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,
     notifications: embeds.length, discord: Boolean(webhook),
   });
