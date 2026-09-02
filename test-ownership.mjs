@@ -171,5 +171,52 @@ const m8 = mergePayload(prev2, {
 }, new Set([2001]), 7000);
 eq("legacy shape: empty map treated as not-fetched → carried", m8.payload.profiles.B.playtime, { 2001: 120 });
 
+
+// ---------------------------------------------------------------
+// T9: refusal dialects — a 403 with a JSON body is an ANSWER
+// (handled above); a 403 with no parseable body is a REFUSAL and
+// must be treated as unanswered: retried, hard-missed, and patched.
+// This is the soft-refusal bypass that produced the 9→8 drop.
+// ---------------------------------------------------------------
+console.log("T9 soft refusals become misses");
+const refuse = (status) => ({ ok: false, status, json: async () => { throw new Error("html error page, not an answer"); } });
+globalThis.fetch = async (url) => {
+  if (url.includes("GetPlayerSummaries")) return ok({ response: { players: [{ steamid: "D", personaname: "Dee", avatarfull: "d.png" }] } });
+  if (url.includes("GetOwnedGames")) return refuse(403);
+  if (url.includes("GetGlobalAchievementPercentagesForApp"))
+    return ok({ achievementpercentages: { achievements: [{ name: "z1", percent: "10.0" }, { name: "z2", percent: "9.0" }] } });
+  if (url.includes("GetSchemaForGame"))
+    return ok({ game: { gameName: "Zed", availableGameStats: { achievements: [{ name: "z1", displayName: "Z1" }, { name: "z2", displayName: "Z2" }] } } });
+  if (url.includes("GetPlayerAchievements")) return refuse(403);
+  throw new Error(`unmocked url: ${url}`);
+};
+const f9 = await fetchClubData("k", ["D"], ["2001"], { concurrency: 5 });
+eq("bodiless 403 on owned = not fetched", f9.profileMeta.D.ownedFetched, false);
+eq("bodiless 403 on player call = reported miss", f9.playerMisses, { 2001: ["D"] });
+eq("refusals count as failures", f9.failed, 2);
+eq("game still emitted (global+schema answered)", f9.games.map((g) => g.appid), [2001]);
+const dUnlocks = [{ id: "z1", t: 111 }, { id: "z2", t: 222 }];
+const prev9 = { games: [{ appid: 2001, name: "Zed", ach: [{ id: "z1", pct: 10 }, { id: "z2", pct: 9 }], players: { D: dUnlocks } }],
+  profiles: { D: { persona: "Dee", avatar: "d", playtime: { 2001: 50 }, lastPlayed: {}, ownedAt: 42, ownedStrikes: {} } } };
+const m9 = mergePayload(prev9, f9, new Set([2001]), 9000);
+eq("refused player call → unlocks carried, perfect intact", m9.payload.games.find((g) => g.appid === 2001).players.D, dUnlocks);
+eq("refused owned call → library carried", m9.payload.profiles.D.playtime, { 2001: 50 });
+
+// ---------------------------------------------------------------
+// T10: downgrade guard — fewer unlocks on an unchanged ach list is
+// a partial answer, not progress un-earned. Changed ach list = trust.
+// ---------------------------------------------------------------
+console.log("T10 unlock-count downgrade guard");
+const full = [{ id: "q1", t: 1 }, { id: "q2", t: 2 }];
+const prev10 = { games: [{ appid: 3001, name: "Q", ach: [{ id: "q1", pct: 5 }, { id: "q2", pct: 5 }], players: { E: full } }], profiles: {} };
+const shrunk = { games: [{ appid: 3001, name: "Q", ach: [{ id: "q1", pct: 5 }, { id: "q2", pct: 5 }], players: { E: [{ id: "q1", t: 1 }] } }],
+  failed: 0, profiles: {}, profileMeta: {}, playerMisses: {} };
+const m10 = mergePayload(prev10, shrunk, new Set([3001]), 9000);
+eq("shrunk unlocks on same ach list → cached wins", m10.payload.games[0].players.E, full);
+eq("downgrade counted as carried", m10.carried.players, 1);
+const evolved = { ...shrunk, games: [{ ...shrunk.games[0], ach: [...shrunk.games[0].ach, { id: "q3", pct: 5 }] }] };
+const m10b = mergePayload(prev10, evolved, new Set([3001]), 9000);
+eq("ach list changed → fetch trusted", m10b.payload.games[0].players.E, [{ id: "q1", t: 1 }]);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

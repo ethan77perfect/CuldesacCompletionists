@@ -88,8 +88,33 @@ export default async function handler(req, res) {
   const clubIdSet = new Set(appids.map(String));
   const hotIds = new Set(recentAppids.map(String).filter((a) => clubIdSet.has(a)));
 
-  const { targets, staleCount } = computeTargets(prevPayload?.gameFetchedAt ?? {}, appids,
+  // ---- force lever: ?force=all|appid,appid + &secret=CRON_SECRET ----
+  // Corrupted entries get stamped FRESH by the very pass that broke
+  // them, so the staleness machinery won't revisit them on its own.
+  // Forcing puts the named games (or the whole catalog) at the head of
+  // the queue, oldest stamp first, under the normal slice budget —
+  // loop until forcedRemaining hits 0. Games re-fetched within the
+  // last 10 minutes count as done, so force=all converges instead of
+  // spinning. Secret-gated: this burns real Steam quota.
+  const forceRaw = String(req.query?.force ?? "").trim();
+  let forcedRemaining = 0, needForce = [];
+  if (forceRaw) {
+    if ((req.query?.secret ?? "") !== process.env.CRON_SECRET)
+      return res.status(401).json({ error: "force requires the cron secret" });
+    const wanted = forceRaw === "all" ? [...appids]
+      : forceRaw.split(",").map((s) => s.trim()).filter((a) => clubIdSet.has(a));
+    const fa = prevPayload?.gameFetchedAt ?? {};
+    const FORCE_FRESH = 10 * 60;
+    needForce = wanted.filter((a) => nowEpoch - (fa[a] ?? 0) > FORCE_FRESH)
+      .sort((x, y) => (fa[x] ?? 0) - (fa[y] ?? 0));
+  }
+
+  let { targets, staleCount } = computeTargets(prevPayload?.gameFetchedAt ?? {}, appids,
     { budget: GAME_BUDGET, staleAfterSec: STALE_AFTER, nowEpoch, hotIds, hotStaleAfterSec: HOT_STALE });
+  if (needForce.length) {
+    targets = needForce.slice(0, GAME_BUDGET);
+    forcedRemaining = needForce.length - targets.length;
+  }
 
   if (!targets.length) {
     // nothing to fetch — but persist a refreshed recent-set so the next
@@ -164,6 +189,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
     ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0,
+    ...(forceRaw ? { forcedRemaining } : {}),
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
   });
 }
