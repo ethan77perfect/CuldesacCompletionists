@@ -188,7 +188,7 @@ export default async function handler(req, res) {
   const staleRemaining = Math.max(0, staleCount - gotIds.size);
   return res.status(200).json({
     ok: true, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
-    ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0,
+    ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0, gamesVetoed: carried?.gamesVetoed ?? 0,
     ...(forceRaw ? { forcedRemaining } : {}),
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
   });

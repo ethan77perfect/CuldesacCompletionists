@@ -233,7 +233,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true, snapshotted: rows.length, failedRequests: data.failed,
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
-    ownedCarried: carried.owned, playersCarried: carried.players,
+    ownedCarried: carried.owned, playersCarried: carried.players, gamesVetoed: carried.gamesVetoed ?? 0,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,
     notifications: embeds.length, discord: Boolean(webhook),
   });

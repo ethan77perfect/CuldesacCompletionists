@@ -30,7 +30,7 @@ globalThis.fetch = async (url) => {
       { appid: 1001, playtime_forever: 300, rtime_last_played: 111 },
       { appid: 1002, playtime_forever: 40, rtime_last_played: 99 },
     ] } });
-    if (url.includes("steamid=B")) return err(403);   // data null, hardMiss FALSE — still must not wipe
+    if (url.includes("steamid=B")) return err(403);   // {} body: parseable but NO envelope → refusal → hardMiss
     return err(500);                                   // C: hard miss after retries
   }
   if (url.includes("GetGlobalAchievementPercentagesForApp"))
@@ -49,7 +49,7 @@ globalThis.fetch = async (url) => {
       { apiname: "a1", achieved: 1, unlocktime: 100 }, { apiname: "a2", achieved: 1, unlocktime: 200 },
     ] } });
     if (url.includes("steamid=B")) return err(500);    // hard miss → reported hole
-    return err(400);                                   // C never launched — legitimate absence
+    return { ok: false, status: 400, json: async () => ({ playerstats: { error: "Requested app has no stats", success: false } }) };   // C never launched — a REAL answer, envelope present
   }
   throw new Error(`unmocked url: ${url}`);
 };
@@ -63,7 +63,7 @@ eq("playerMisses reports B on 1001 only", fetched.playerMisses, { 1001: ["B"] })
 eq("schema hard-miss game not emitted", fetched.games.map((g) => g.appid), [1001]);
 eq("emitted game: A complete, B absent (hole), C absent (never played)",
   Object.keys(fetched.games[0].players), ["A"]);
-eq("failed counts hard misses only (C-owned, B-player, 1002-schema)", fetched.failed, 3);
+eq("failed counts refusals too (B-owned {}, C-owned, B-player, 1002-schema)", fetched.failed, 4);
 eq("A's playtime landed", fetched.profiles.A.playtime, { 1001: 300, 1002: 40 });
 eq("B's summary still landed despite owned 403", fetched.profiles.B.persona, "Bee");
 
@@ -217,6 +217,45 @@ eq("downgrade counted as carried", m10.carried.players, 1);
 const evolved = { ...shrunk, games: [{ ...shrunk.games[0], ach: [...shrunk.games[0].ach, { id: "q3", pct: 5 }] }] };
 const m10b = mergePayload(prev10, evolved, new Set([3001]), 9000);
 eq("ach list changed → fetch trusted", m10b.payload.games[0].players.E, [{ id: "q1", t: 1 }]);
+
+
+// ---------------------------------------------------------------
+// T11: the Scritchy storm — global answered with a bodied-but-
+// envelope-less 403 ({}), schema fine from CDN. Before: emitted as an
+// all-Unrated zero-player husk. Now: refusal → miss → carried whole.
+// ---------------------------------------------------------------
+console.log("T11 envelope-less global answer cannot husk a game");
+globalThis.fetch = async (url) => {
+  if (url.includes("GetPlayerSummaries")) return ok({ response: { players: [{ steamid: "S", personaname: "Ess", avatarfull: "s.png" }] } });
+  if (url.includes("GetOwnedGames")) return ok({ response: { games: [{ appid: 5001, playtime_forever: 90, rtime_last_played: 5 }] } });
+  if (url.includes("GetGlobalAchievementPercentagesForApp")) return err(403);   // JSON {} — no envelope
+  if (url.includes("GetSchemaForGame"))
+    return ok({ game: { gameName: "Scritchy", availableGameStats: { achievements: [{ name: "s1", displayName: "S1" }, { name: "s2", displayName: "S2" }] } } });
+  if (url.includes("GetPlayerAchievements")) return err(403);                   // JSON {} — no envelope
+  throw new Error(`unmocked url: ${url}`);
+};
+const f11 = await fetchClubData("k", ["S"], ["5001"], { concurrency: 5 });
+eq("husk conditions → game NOT emitted", f11.games.length, 0);
+const rich = { appid: 5001, name: "Scritchy", ach: [{ id: "s1", pct: 40 }, { id: "s2", pct: 8 }], players: { S: [{ id: "s1", t: 77 }, { id: "s2", t: 88 }] } };
+const m11 = mergePayload({ games: [rich], profiles: {} }, f11, new Set([5001]), 9999);
+eq("cached game carried intact through the storm", m11.payload.games[0], rich);
+
+// ---------------------------------------------------------------
+// T12: rated-wipe veto — a validly-empty percentages answer routed
+// through the new-title branch still can't zero an established game.
+// ---------------------------------------------------------------
+console.log("T12 rated-wipe veto");
+const husk = { appid: 5001, name: "Scritchy", ach: [{ id: "s1", pct: 0 }, { id: "s2", pct: 0 }], players: {} };
+const m12 = mergePayload({ games: [rich], profiles: {} },
+  { games: [husk], failed: 0, profiles: {}, profileMeta: {}, playerMisses: {} }, new Set([5001]), 9999);
+eq("husk vetoed — cached entry rides through", m12.payload.games[0], rich);
+eq("veto counted", m12.carried.gamesVetoed, 1);
+eq("fetch stamp still advances (no re-fetch loop)", m12.gotIds.has(5001), true);
+const fresh = { appid: 6001, name: "Brand New", ach: [{ id: "n1", pct: 0 }], players: {} };
+const m12b = mergePayload({ games: [rich], profiles: {} },
+  { games: [fresh], failed: 0, profiles: {}, profileMeta: {}, playerMisses: {} }, new Set([5001, 6001]), 9999);
+eq("genuinely new game still enters Unrated", m12b.payload.games.find((g) => g.appid === 6001), fresh);
+eq("no veto for the newcomer", m12b.carried.gamesVetoed, 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
