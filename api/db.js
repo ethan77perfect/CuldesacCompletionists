@@ -539,6 +539,38 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true, outcome });
       }
 
+      case "gauntletUndo": {
+        // Remove the member's most recent gauntlet event. If it was a
+        // resolve (win/loss) and they haven't spun again, RESTORE the
+        // pending assignment from it — a misclicked "Beat it" undoes
+        // back to exactly mid-run. Streaks recompute; nothing desyncs.
+        const sid = String(body.steamid ?? "");
+        const last = await supabase.from("gauntlet_events").select("*").eq("steamid", sid)
+          .order("at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+        if (last.error) return fail(500, last.error.message + " — run migration-v15.sql?");
+        if (!last.data) return fail(400, "No gauntlet history for that member");
+        const d = await supabase.from("gauntlet_events").delete().eq("id", last.data.id);
+        if (d.error) return fail(500, d.error.message);
+        const st = await supabase.from("gauntlet_state").select("steamid").eq("steamid", sid).maybeSingle();
+        let restored = false;
+        if (!st.data) {
+          const r = await supabase.from("gauntlet_state").insert({ steamid: sid, appid: last.data.appid, route: last.data.route });
+          restored = !r.error;
+        }
+        return res.status(200).json({ ok: true, undone: last.data.kind, appid: last.data.appid, restored });
+      }
+
+      case "gauntletErase": {
+        // Scorched earth for one member: their whole run log and any
+        // pending assignment. Built for wiping test records; confirm
+        // lives in the UI. Erased means gone — streaks recompute empty.
+        const sid = String(body.steamid ?? "");
+        const d = await supabase.from("gauntlet_events").delete().eq("steamid", sid);
+        if (d.error) return fail(500, d.error.message + " — run migration-v15.sql?");
+        await supabase.from("gauntlet_state").delete().eq("steamid", sid);
+        return res.status(200).json({ ok: true });
+      }
+
       case "deleteBingo": {
         const id = Number(body.roundId);
         if (!id) return fail(400, "roundId required");
