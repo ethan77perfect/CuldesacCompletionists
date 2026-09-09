@@ -26,7 +26,8 @@ export default function Gauntlet({ stats, meta, mutate, busy }) {
   const [member, setMember] = useState(meta.members[0]?.steamid ?? "");
   const [phase, setPhase] = useState({ step: "game" });   // {step:"game"} → {step:"route", appid} → {step:"lock", appid, route}
   const [confirmFall, setConfirmFall] = useState(false);
-  useEffect(() => { setPhase({ step: "game" }); setConfirmFall(false); }, [member, meta.gauntletState]);
+  const [confirmErase, setConfirmErase] = useState(false);
+  useEffect(() => { setPhase({ step: "game" }); setConfirmFall(false); setConfirmErase(false); }, [member, meta.gauntletState]);
 
   const name = (sid) => stats.byId[sid]?.name ?? "?";
   const color = (sid) => stats.byId[sid]?.color ?? "var(--muted)";
@@ -100,6 +101,33 @@ export default function Gauntlet({ stats, meta, mutate, busy }) {
             </span>
             {!ownershipKnown && <span style={{ fontSize: 11, color: "var(--faint)" }}>⚠ ownership unknown (private profile?) — showing all designated games</span>}
           </div>
+
+          {(byMember[member]?.length ?? 0) > 0 && (() => {   // record-keeping: undo a misclick, or wipe test history
+            const evs = byMember[member];
+            const last = evs[evs.length - 1];
+            return (
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: "var(--faint)" }}>
+                {evs.length} recorded run{evs.length > 1 ? "s" : ""}
+                <button style={{ ...S.btnGhost, fontSize: 11, padding: "2px 8px" }} disabled={busy}
+                  title="Removes the last recorded outcome; if it was a misclicked resolve, the pending run comes back"
+                  onClick={() => mutate("gauntletUndo", { steamid: member },
+                    (j) => `Undid the last ${j.undone === "win" ? "🏆 win" : "💀 fall"} (${gameName[j.appid] ?? `App ${j.appid}`})${j.restored ? " — back mid-run" : ""}.`)}>
+                  ⎌ Undo last ({last.kind === "win" ? "🏆" : "💀"} {gameName[last.appid] ?? `App ${last.appid}`})
+                </button>
+                {confirmErase ? (
+                  <>
+                    <button style={{ ...S.btnGhost, fontSize: 11, padding: "2px 8px", color: "var(--err-border)", borderColor: "var(--err-border)" }}
+                      disabled={busy} onClick={() => mutate("gauntletErase", { steamid: member }, () => "History erased — a blank slate.")}>
+                      Really erase {name(member)}'s entire gauntlet history?
+                    </button>
+                    <button style={{ ...S.btnGhost, fontSize: 11, padding: "2px 8px" }} onClick={() => setConfirmErase(false)}>Keep it</button>
+                  </>
+                ) : (
+                  <button style={{ ...S.btnGhost, fontSize: 11, padding: "2px 8px" }} disabled={busy} onClick={() => setConfirmErase(true)}>Erase history…</button>
+                )}
+              </div>
+            );
+          })()}
 
           {designated.length === 0 ? (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>No roguelikes designated yet — the Designate tab awaits its curator.</div>
