@@ -491,6 +491,14 @@ export function buildClubStats(clubData, meta, settings) {
   const profilesPlaytime = Object.fromEntries(
     Object.entries(profiles).map(([sid, p]) => [sid, p.playtime ?? {}])
   );
+  // Full-library ownership as a compact set (payload `owned` arrays);
+  // legacy payloads without them fall back to playtime keys, which were
+  // full-library before the diet. Club-game ownership should keep using
+  // profilesPlaytime — this exists for beyond-the-catalog checks
+  // (Century's dusty covers).
+  const profilesOwned = Object.fromEntries(
+    Object.entries(profiles).map(([sid, p]) => [sid, p.owned ?? Object.keys(p.playtime ?? {}).map(Number)])
+  );
   const profilesLastPlayed = Object.fromEntries(
     Object.entries(profiles).map(([sid, p]) => [sid, p.lastPlayed ?? {}])
   );
@@ -499,7 +507,7 @@ export function buildClubStats(clubData, meta, settings) {
     games, byId, board, monthBoard, contractBoard, contractView,
     monthLabel: monthLabelOf(), monthHistory, reigning, events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
-    histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesLastPlayed,
+    histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesOwned, profilesLastPlayed,
   };
 }
 
