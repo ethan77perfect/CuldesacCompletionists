@@ -279,7 +279,7 @@ function AddRoguelike({ stats, designated, mutate, busy }) {
         {candidates.map((g) => <option key={g.appid} value={g.appid}>{g.name}</option>)}
       </select>
       <button style={S.btn} disabled={busy || !appid}
-        onClick={async () => { await mutate("setRoguelike", { appid: Number(appid), routes: [] }, "Designated. Now give it routes below."); setAppid(""); }}>
+        onClick={async () => { await mutate("setRoguelike", { appid: Number(appid), routes: [] }, () => "Designated. Now give it routes below."); setAppid(""); }}>
         Mark as roguelike
       </button>
     </div>
@@ -295,13 +295,13 @@ function DesignatedRow({ row, gameName, mutate, busy }) {
         <b>{gameName[row.appid] ?? `App ${row.appid}`}</b>
         <span style={{ fontSize: 11, color: "var(--faint)" }}>{(row.routes ?? []).length || "no"} routes</span>
         <button style={{ ...S.btnGhost, marginLeft: "auto", color: "var(--faint)" }} disabled={busy}
-          onClick={() => mutate("removeRoguelike", { appid: row.appid }, "Removed from the gauntlet.")}>Remove</button>
+          onClick={() => mutate("removeRoguelike", { appid: row.appid }, () => "Removed from the gauntlet.")}>Remove</button>
       </div>
       <textarea style={{ ...S.input, minHeight: 64, fontFamily: "inherit" }} value={text}
         placeholder={"Ironclad\nThe Silent\nDefect…"} onChange={(e) => setText(e.target.value)} />
       {dirty && (
         <button style={{ ...S.btn, justifySelf: "start" }} disabled={busy}
-          onClick={() => mutate("setRoguelike", { appid: row.appid, routes: text.split("\n").map((s) => s.trim()).filter(Boolean) }, "Routes saved.")}>
+          onClick={() => mutate("setRoguelike", { appid: row.appid, routes: text.split("\n").map((s) => s.trim()).filter(Boolean) }, () => "Routes saved.")}>
           Save routes
         </button>
       )}
