@@ -234,7 +234,11 @@ export default function App() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      if (successMsg && !opts.quiet) setNotice(successMsg(j));
+      // Strings and functions are both legal here — a string success
+      // message used to crash AFTER a successful write ("x is not a
+      // function"), skipping the reload and making the change look
+      // failed until a manual retry refetched it.
+      if (successMsg && !opts.quiet) setNotice(typeof successMsg === "function" ? successMsg(j) : successMsg);
       // Only game-set changes need the full Steam pipeline (with its
       // snapshot-repaint-then-live-refresh dance). Everything else —
       // century picks, covers, contracts, votes, ratings, settings —
