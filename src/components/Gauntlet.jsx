@@ -14,77 +14,12 @@
 // from (lib/gauntlet.js). The Hall of Streaks ranks every streak
 // ever — one member may hold half the board; that's the point.
 // ---------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { S, fmtDate } from "./ui.jsx";
+import FateWheel from "./FateWheel.jsx";
 import { gauntletNow, topStreaks, eventsBySid } from "../lib/gauntlet.js";
 
-const SLICE_COLORS = ["#5CB8A6", "#7FB4E6", "#B48CE0", "#E0824B", "#E05B5B", "#E8B84B", "#6BC46D", "#D97BB6"];
 const capsule = (appid) => `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/capsule_231x87.jpg`;
-
-// ---- MiniWheel: a compact fate wheel. The target is drawn before
-// launch; the animation just makes the answer feel earned. ----
-function MiniWheel({ options, disabled, onLanded, hubLabel }) {
-  const [rot, setRot] = useState(0);
-  const [spinning, setSpinning] = useState(false);
-  const rafRef = useRef(null);
-  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
-  const n = options.length;
-  const step = 360 / n;
-  const spin = () => {
-    if (spinning || disabled || !n) return;
-    const target = Math.floor(Math.random() * n);
-    // land target's center under the top pointer: rotation ≡ −(mid angle)
-    const final = 360 * (4 + Math.floor(Math.random() * 3)) + ((360 - (target * step + step / 2)) % 360);
-    const from = rot % 360, delta = final - from, D = 2600 + Math.random() * 900, t0 = performance.now();
-    setSpinning(true);
-    const frame = (now) => {
-      const t = Math.min(1, (now - t0) / D);
-      setRot(from + delta * (1 - Math.pow(1 - t, 4)));   // fast launch, long real-wheel decay
-      if (t < 1) rafRef.current = requestAnimationFrame(frame);
-      else { setSpinning(false); onLanded(target); }
-    };
-    rafRef.current = requestAnimationFrame(frame);
-  };
-  const R = 130, C = 150;
-  const arc = (i) => {
-    const a0 = ((i * step - 90) * Math.PI) / 180, a1 = (((i + 1) * step - 90) * Math.PI) / 180;
-    return `M ${C} ${C} L ${C + R * Math.cos(a0)} ${C + R * Math.sin(a0)} A ${R} ${R} 0 ${step > 180 ? 1 : 0} 1 ${C + R * Math.cos(a1)} ${C + R * Math.sin(a1)} Z`;
-  };
-  return (
-    <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>
-      <div style={{ position: "relative", width: 300, height: 300 }}>
-        <svg width="300" height="300" viewBox="0 0 300 300">
-          <g transform={`rotate(${rot} ${C} ${C})`}>
-            {options.map((o, i) => (
-              <g key={i}>
-                <path d={arc(i)} fill={SLICE_COLORS[i % SLICE_COLORS.length]} stroke="var(--bg, #111)" strokeWidth="1.5" opacity="0.9">
-                  <title>{o}</title>
-                </path>
-                {n <= 24 && (
-                  <text x={C + 78 * Math.cos(((i + 0.5) * step - 90) * Math.PI / 180)}
-                    y={C + 78 * Math.sin(((i + 0.5) * step - 90) * Math.PI / 180)}
-                    transform={`rotate(${(i + 0.5) * step} ${C + 78 * Math.cos(((i + 0.5) * step - 90) * Math.PI / 180)} ${C + 78 * Math.sin(((i + 0.5) * step - 90) * Math.PI / 180)})`}
-                    textAnchor="middle" dominantBaseline="middle"
-                    style={{ fontSize: n > 12 ? 8 : 10, fill: "#111", fontWeight: 700 }}>
-                    {o.length > 14 ? o.slice(0, 13) + "…" : o}
-                  </text>
-                )}
-              </g>
-            ))}
-          </g>
-          <circle cx={C} cy={C} r="34" fill="var(--panel, #1b1b1b)" stroke="var(--border, #333)" />
-          <text x={C} y={C} textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 11, fill: "var(--muted, #999)" }}>{hubLabel}</text>
-        </svg>
-        <div style={{ position: "absolute", top: -4, left: "50%", transform: "translateX(-50%)",
-          width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent",
-          borderTop: "16px solid var(--accent, #E8B84B)" }} />
-      </div>
-      <button style={S.btn} disabled={disabled || spinning || !n} onClick={spin}>
-        {spinning ? "Fate deciding…" : `Spin (${n})`}
-      </button>
-    </div>
-  );
-}
 
 export default function Gauntlet({ stats, meta, mutate, busy }) {
   const [tab, setTab] = useState("play");
@@ -190,7 +125,8 @@ export default function Gauntlet({ stats, meta, mutate, busy }) {
           ) : now.pool.length === 0 ? (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>This member owns none of the designated roguelikes — the gauntlet cannot claim what it cannot reach.</div>
           ) : phase.step === "game" ? (
-            <MiniWheel hubLabel="THE GAME" options={now.pool.map((a) => gameName[a] ?? `App ${a}`)}
+            <FateWheel drumTitle="Under the pointer — the game"
+              slices={now.pool.map((a) => ({ id: a, name: gameName[a] ?? `App ${a}` }))}
               disabled={busy} onLanded={(i) => setPhase({ step: "route", appid: now.pool[i] })} />
           ) : (
             <div style={{ display: "grid", gap: 10, justifyItems: "center" }}>
@@ -199,8 +135,8 @@ export default function Gauntlet({ stats, meta, mutate, busy }) {
                 {phase.step === "route" && " — now, the route."}
               </div>
               {phase.step === "route" ? (
-                <MiniWheel hubLabel="THE ROUTE"
-                  options={(routesOf[phase.appid]?.length ? routesOf[phase.appid] : ["Win a run"])}
+                <FateWheel drumTitle="Under the pointer — the route"
+                  slices={(routesOf[phase.appid]?.length ? routesOf[phase.appid] : ["Win a run"]).map((r, i) => ({ id: i, name: r }))}
                   disabled={busy}
                   onLanded={(i) => setPhase({ step: "lock", appid: phase.appid, route: (routesOf[phase.appid]?.length ? routesOf[phase.appid] : ["Win a run"])[i] })} />
               ) : (
