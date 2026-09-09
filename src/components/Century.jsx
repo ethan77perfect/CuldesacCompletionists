@@ -133,7 +133,12 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
 
   const playtime = stats.profilesPlaytime?.[viewing] ?? {};
   const lastPlayed = stats.profilesLastPlayed?.[viewing] ?? {};
-  const ownershipKnown = Object.keys(playtime).length > 0;
+  // Century picks roam beyond the club catalog, so ownership comes from
+  // the full-library `owned` set; club games may ride a strike-carry
+  // that the set doesn't know about, so the club minute-map counts too.
+  const ownedSet = new Set(stats.profilesOwned?.[viewing] ?? []);
+  const isOwned = (appid) => ownedSet.has(Number(appid)) || playtime[appid] !== undefined;
+  const ownershipKnown = ownedSet.size > 0 || Object.keys(playtime).length > 0;
 
   const listOf = (sid) => (meta.century ?? []).filter((c) => c.steamid === sid);
   const statusOf = (sid, appid) => {
@@ -256,7 +261,7 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                 border: "1px dashed var(--border)", opacity: 0.4 }} />;
               const appid = Number(c.appid);
               const st = statusOf(viewing, appid);
-              const owned = ownershipKnown ? playtime[appid] !== undefined : null;
+              const owned = ownershipKnown ? isOwned(appid) : null;
               return <Cover key={`${c.appid}-${coverOf[appid] ?? ""}`} appid={c.appid} name={c.name}
                 status={st.status} pct={st.pct} owned={owned} override={coverOf[appid]} />;
             })}
@@ -309,7 +314,7 @@ export default function Century({ stats, meta, mutate, busy, nav }) {
                 const appid = Number(c.appid);
                 const st = statusOf(viewing, appid);
                 const tracked = st.status !== "untracked";
-                const owned = ownershipKnown ? playtime[appid] !== undefined : null;
+                const owned = ownershipKnown ? isOwned(appid) : null;
                 const sortNote =
                   sort === "playtime" && playtime[appid] !== undefined ? fmtMin(playtime[appid]) :
                   sort === "diff" && tracked ? `${trackedById[appid].diff ?? "⏱"}/10` :
