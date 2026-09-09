@@ -1,7 +1,7 @@
 ---
 type: feature
 status: live
-files: [src/lib/gauntlet.js, src/components/Gauntlet.jsx, src/components/Trophies.jsx, src/App.jsx, api/db.js, migration-v15.sql]
+files: [src/lib/gauntlet.js, src/components/FateWheel.jsx, src/components/Gauntlet.jsx, src/components/Trophies.jsx, src/App.jsx, api/db.js, migration-v15.sql]
 ---
 # Roguelike Gauntlet
 
@@ -17,6 +17,10 @@ files: [src/lib/gauntlet.js, src/components/Gauntlet.jsx, src/components/Trophie
 **Hall of Streaks**: every streak ever, ranked — top 20, one member may hold half the board. Longer first; ties go to whoever got there first. Each entry: cover-art chain with route + date under every win, 🔁 lap badges, **💀 + the game that ended it** (faded) on finished streaks, pulsing → … on active ones. Covers use the club's overrides, falling back to Steam capsule art.
 
 **Designate tab**: mark club games as roguelikes, routes one-per-line (≤40 routes, ≤60 chars). Removing a designation dissolves any pending runs on it. Club-key gated like every mutation.
+
+**The wheels** are `FateWheel.jsx` — the Wheel page's rendering machinery extracted for reuse: curved rim labels via textPath (reversed on the bottom half so text never reads upside down), the Price-is-Right drum readout (current slice big and lit, neighbors curving away in 3D, flickering as slices pass — the many-slice readability answer), boundary-kick pointer, rim dots, sheen, hub-click spin. rAF mutates the rotating group directly; React repaints only on boundary crossings. Wheel.jsx itself is deliberately untouched — its server-committed contract-spin handoff stays isolated; migrating it onto FateWheel is a possible future refactor, not a today problem.
+
+**Record-keeping** (Play tab, once a member has history): **⎌ Undo last** removes the most recent event — and if it was a resolve with no new spin since, restores the pending assignment, so a misclicked 🏆/💀 undoes back to exactly mid-run. **Erase history…** (confirm-gated) wipes one member's entire log + pending run — built for clearing test records; erased means gone, streaks recompute empty. Both key-gated like all mutations.
 
 **Trophy Room**: ⚔️ Gauntlet legends panel — top 3 streaks with ACTIVE/ended status.
 
