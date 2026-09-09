@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -96,7 +96,19 @@ export default async function handler(req, res) {
         supabase.from("bingo_cards").select("*"),
         supabase.from("completions").select("*"),
         supabase.from("queue").select("*").order("position"),
+        supabase.from("roguelikes").select("*").order("added_at"),
+        supabase.from("gauntlet_state").select("*"),
       ]);
+      // gauntlet_events can outgrow PostgREST's silent 1000-row cap
+      // (the Burndown lesson) — page until a short page. Streak
+      // derivation needs the FULL log. Pre-v15 DBs: tolerate as [].
+      let gauntletEvents = [];
+      for (let from = 0; ; from += 1000) {
+        const p = await supabase.from("gauntlet_events").select("*").order("at").order("id").range(from, from + 999);
+        if (p.error) { gauntletEvents = []; break; }
+        gauntletEvents.push(...(p.data ?? []));
+        if ((p.data ?? []).length < 1000) break;
+      }
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
         return res.status(500).json({
@@ -120,6 +132,9 @@ export default async function handler(req, res) {
         bingoCards: bingoCards.error ? [] : (bingoCards.data ?? []),      // tolerate pre-v9 DBs
         completions: completions.error ? [] : (completions.data ?? []),   // tolerate pre-v13 DBs
         queue: queue.error ? [] : (queue.data ?? []),                     // tolerate pre-v14 DBs
+        roguelikes: roguelikes.error ? [] : (roguelikes.data ?? []),      // tolerate pre-v15 DBs
+        gauntletState: gauntletState.error ? [] : (gauntletState.data ?? []),
+        gauntletEvents,
       });
     }
 
@@ -470,6 +485,58 @@ export default async function handler(req, res) {
         const w = await supabase.from("bingo_cards").insert(rows);
         if (w.error) return fail(500, `bingo_cards insert failed: ${w.error.message}`);
         return res.status(200).json({ ok: true, roundId: round.data.id, dealt: rows.length });
+      }
+
+      case "setRoguelike": {
+        // Designation + routes in one op: upsert the game's route list.
+        const appid = Number(body.appid);
+        if (!appid) return fail(400, "appid required");
+        const routes = (Array.isArray(body.routes) ? body.routes : [])
+          .map((r) => String(r).trim().slice(0, 60)).filter(Boolean).slice(0, 40);
+        const { error } = await supabase.from("roguelikes").upsert({ appid, routes });
+        if (error) return fail(500, error.message + " — run migration-v15.sql?");
+        return res.status(200).json({ ok: true, routes: routes.length });
+      }
+
+      case "removeRoguelike": {
+        const appid = Number(body.appid);
+        if (!appid) return fail(400, "appid required");
+        const d = await supabase.from("roguelikes").delete().eq("appid", appid);
+        if (d.error) return fail(500, d.error.message);
+        await supabase.from("gauntlet_state").delete().eq("appid", appid);   // pending runs on it dissolve
+        return res.status(200).json({ ok: true });
+      }
+
+      case "gauntletSpin": {
+        // Persist the wheel's verdict as the member's pending run. One
+        // run in flight per member — the state machine, enforced here.
+        if (!/^\d{17}$/.test(String(body.steamid ?? ""))) return fail(400, "Bad steamid");
+        const appid = Number(body.appid);
+        const route = String(body.route ?? "").slice(0, 60);
+        const rog = await supabase.from("roguelikes").select("appid").eq("appid", appid).maybeSingle();
+        if (rog.error) return fail(500, rog.error.message + " — run migration-v15.sql?");
+        if (!rog.data) return fail(400, "That game isn't designated as a roguelike");
+        const existing = await supabase.from("gauntlet_state").select("appid").eq("steamid", body.steamid).maybeSingle();
+        if (existing.data) return fail(400, "Already mid-run — resolve the current assignment first");
+        const w = await supabase.from("gauntlet_state").insert({ steamid: body.steamid, appid, route });
+        if (w.error) return fail(500, w.error.message);
+        return res.status(200).json({ ok: true });
+      }
+
+      case "gauntletResolve": {
+        // The event is written from the STATE row, not the request —
+        // the server remembers what was assigned; the click just says
+        // how it ended. Honor system by design: glory-only.
+        const sid = String(body.steamid ?? "");
+        const outcome = body.outcome === "win" ? "win" : body.outcome === "loss" ? "loss" : null;
+        if (!outcome) return fail(400, "outcome must be win or loss");
+        const st = await supabase.from("gauntlet_state").select("*").eq("steamid", sid).maybeSingle();
+        if (st.error) return fail(500, st.error.message + " — run migration-v15.sql?");
+        if (!st.data) return fail(400, "No run in flight for that member");
+        const ins = await supabase.from("gauntlet_events").insert({ steamid: sid, appid: st.data.appid, route: st.data.route, kind: outcome });
+        if (ins.error) return fail(500, ins.error.message);
+        await supabase.from("gauntlet_state").delete().eq("steamid", sid);
+        return res.status(200).json({ ok: true, outcome });
       }
 
       case "deleteBingo": {
