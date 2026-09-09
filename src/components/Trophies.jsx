@@ -16,6 +16,7 @@
 import { useMemo } from "react";
 import { S, TierChip, fmtDate } from "./ui.jsx";
 import { deriveBingoWinners } from "../lib/bingo.js";
+import { topStreaks, eventsBySid } from "../lib/gauntlet.js";
 
 const Panel = ({ title, sub, children }) => (
   <div className="panel" style={S.panel}>
@@ -43,6 +44,15 @@ export default function Trophies({ stats, meta, nav }) {
     .sort((a, b) => (b.hardestClear.diff ?? 0) - (a.hardestClear.diff ?? 0))[0] ?? null;
   const r = stats.records ?? {};
   const raceWinners = (stats.races ?? []).filter((x) => x.winner);
+  const gauntletTop = useMemo(() => {
+    const designated = (meta.roguelikes ?? []).map((r) => Number(r.appid));
+    const ownedRoguesOf = (sid) => {
+      const pt = stats.profilesPlaytime?.[sid] ?? {};
+      const known = Object.keys(pt).length > 0;
+      return new Set(designated.filter((a) => !known || pt[a] !== undefined));
+    };
+    return topStreaks(eventsBySid(meta.gauntletEvents ?? []), ownedRoguesOf, 3);
+  }, [stats, meta]);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -144,6 +154,24 @@ export default function Trophies({ stats, meta, nav }) {
             ))}
           </div>
         </Panel>
+
+        {gauntletTop.length > 0 && (
+          <Panel title="⚔️ Gauntlet legends" sub="longest roguelike streaks, living or dead">
+            <div style={{ display: "grid", gap: 6 }}>
+              {gauntletTop.map((s, i) => (
+                <div key={`${s.sid}-${s.start}`} style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "baseline" }}>
+                  <span style={{ color: "var(--faint)", width: 20 }}>{i + 1}.</span>
+                  <Who sid={s.sid} />
+                  <span style={{ fontWeight: 700, color: "var(--accent)" }}>{s.len}</span>
+                  {s.laps > 0 && <span title={`full library cleared ${s.laps}×`}>🔁×{s.laps}</span>}
+                  <span style={{ marginLeft: "auto", fontSize: 11, color: s.active ? "#6BC46D" : "var(--faint)" }}>
+                    {s.active ? "ACTIVE" : `ended ${fmtDate(Date.parse(s.end) / 1000)}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
 
         {raceWinners.length > 0 && (
           <Panel title="🏁 Race podium" sub="first to 100% on flagged races">
