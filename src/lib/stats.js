@@ -491,6 +491,14 @@ export function buildClubStats(clubData, meta, settings) {
   const profilesPlaytime = Object.fromEntries(
     Object.entries(profiles).map(([sid, p]) => [sid, p.playtime ?? {}])
   );
+  // Full-library ownership as a compact set (payload `owned` arrays);
+  // legacy payloads without them fall back to playtime keys, which were
+  // full-library before the diet. Club-game ownership should keep using
+  // profilesPlaytime — this exists for beyond-the-catalog checks
+  // (Century's dusty covers).
+  const profilesOwned = Object.fromEntries(
+    Object.entries(profiles).map(([sid, p]) => [sid, p.owned ?? Object.keys(p.playtime ?? {}).map(Number)])
+  );
   const profilesLastPlayed = Object.fromEntries(
     Object.entries(profiles).map(([sid, p]) => [sid, p.lastPlayed ?? {}])
   );
@@ -499,7 +507,7 @@ export function buildClubStats(clubData, meta, settings) {
     games, byId, board, monthBoard, contractBoard, contractView,
     monthLabel: monthLabelOf(), monthHistory, reigning, events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
-    histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesLastPlayed,
+    histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesOwned, profilesLastPlayed,
   };
 }
 
@@ -646,11 +654,22 @@ export function projectQueue({ entries, weekday, weekend, start = Date.now(), ho
     rem: (e.effHours * e.ptsLeft) / e.pool,           // mutable countdown
     startT: null, endT: null, series: [],
   }));
-  const days = [], completions = [];
-  let i = 0, truncated = false;
-  if (gs.length) { gs[0].startT = t0; gs[0].series.push({ t: t0, pts: gs[0].ptsLeft }); }
 
-  for (let day = 0; i < gs.length; day++) {
+  // ROTATION (parallel play): games explicitly marked `together` start
+  // simultaneously and split each day's hours equally. When one
+  // finishes, the next queued game auto-joins at that instant, keeping
+  // the rotation at its marked size until the queue runs dry. Fewer
+  // than two marks = the classic serial queue, untouched.
+  const marked = gs.filter((g) => g.together);
+  const R = marked.length >= 2 ? marked.length : 1;
+  const rotation = R > 1 ? [...marked] : gs.slice(0, 1);
+  const tail = R > 1 ? gs.filter((g) => !g.together) : gs.slice(1);
+  let ti = 0;
+  for (const g of rotation) { g.startT = t0; g.series.push({ t: t0, pts: g.ptsLeft }); }
+
+  const days = [], completions = [];
+  let truncated = false;
+  for (let day = 0; rotation.length; day++) {
     if (day >= horizonDays) { truncated = true; break; }
     // step by calendar days, not by 24h blocks — a projection that
     // crosses a DST change must still key to true local midnights or
@@ -661,36 +680,47 @@ export function projectQueue({ entries, weekday, weekend, start = Date.now(), ho
     const budget = isWknd(dayT) ? weekend : weekday;
     let h = budget;
     const done = [];
-    while (h > 1e-9 && i < gs.length) {
-      const g = gs[i];
-      if (g.rem <= h + 1e-9) {
-        h -= g.rem;
+    while (h > 1e-9 && rotation.length) {
+      const n = rotation.length;
+      const minRem = Math.min(...rotation.map((g) => g.rem));
+      const need = minRem * n;               // total hours until the soonest finish at equal split
+      if (need <= h + 1e-9) {
+        h = Math.max(0, h - need);
         // completion instant, placed proportionally through the day
         const tC = dayT + Math.round(((budget - h) / budget) * (dayEnd - dayT));
-        g.rem = 0; g.endT = tC;
-        g.series.push({ t: tC, pts: 0 });
-        completions.push({ appid: g.appid, name: g.name, t: tC, count: completions.length + 1 });
-        done.push(g.appid);
-        i++;
-        if (i < gs.length) { const n = gs[i]; n.startT = tC; n.series.push({ t: tC, pts: n.ptsLeft }); }
+        for (const g of rotation) g.rem -= minRem;
+        const finishers = rotation.filter((g) => g.rem <= 1e-9);
+        for (const g of finishers) {
+          g.rem = 0; g.endT = tC;
+          g.series.push({ t: tC, pts: 0 });
+          completions.push({ appid: g.appid, name: g.name, t: tC, count: completions.length + 1 });
+          done.push(g.appid);
+        }
+        for (const g of finishers) rotation.splice(rotation.indexOf(g), 1);
+        while (rotation.length < R && ti < tail.length) {   // auto-join, queue order
+          const nj = tail[ti++];
+          nj.startT = tC; nj.series.push({ t: tC, pts: nj.ptsLeft });
+          rotation.push(nj);
+        }
       } else {
-        g.rem -= h; h = 0;
+        for (const g of rotation) g.rem -= h / n;
+        h = 0;
       }
     }
-    const active = i < gs.length ? gs[i] : null;
-    // end-of-day sample — on rest days this repeats the value, which
-    // draws the plateau honestly instead of hiding it.
-    if (active) active.series.push({ t: dayEnd, pts: active.rem * active.rate });
+    // end-of-day sample for EVERY active game — on rest days this
+    // repeats the value, which draws the plateau honestly.
+    for (const g of rotation) g.series.push({ t: dayEnd, pts: g.rem * g.rate });
+    const lead = rotation[0] ?? null;
     days.push({
       t: dayT,
-      appid: active?.appid ?? null,
-      ptsEnd: active ? Math.round(active.rem * active.rate) : 0,
+      appid: lead?.appid ?? null,                        // rotation leader (compat with the calendar)
+      also: rotation.slice(1).map((g) => g.appid),       // co-runners this day, if any
+      ptsEnd: lead ? Math.round(lead.rem * lead.rate) : 0,
       done,
       rest: budget <= 0,
     });
-    if (!active) break;
   }
-  const perGame = gs.map(({ rem, rate, ...g }) => g);
+  const perGame = gs.map(({ rem, rate, ...g }) => g);   // unreached games keep empty series, as before
   return { days, perGame, completions, truncated, idle: false };
 }
 

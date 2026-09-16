@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState, futureBaselines] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -96,7 +96,20 @@ export default async function handler(req, res) {
         supabase.from("bingo_cards").select("*"),
         supabase.from("completions").select("*"),
         supabase.from("queue").select("*").order("position"),
+        supabase.from("roguelikes").select("*").order("added_at"),
+        supabase.from("gauntlet_state").select("*"),
+        supabase.from("future_baselines").select("*"),
       ]);
+      // gauntlet_events can outgrow PostgREST's silent 1000-row cap
+      // (the Burndown lesson) — page until a short page. Streak
+      // derivation needs the FULL log. Pre-v15 DBs: tolerate as [].
+      let gauntletEvents = [];
+      for (let from = 0; ; from += 1000) {
+        const p = await supabase.from("gauntlet_events").select("*").order("at").order("id").range(from, from + 999);
+        if (p.error) { gauntletEvents = []; break; }
+        gauntletEvents.push(...(p.data ?? []));
+        if ((p.data ?? []).length < 1000) break;
+      }
       const failed = [members, games, settings, backlog, contracts, hunts, challenges, claims].find((r) => r.error);
       if (failed) {
         return res.status(500).json({
@@ -120,6 +133,10 @@ export default async function handler(req, res) {
         bingoCards: bingoCards.error ? [] : (bingoCards.data ?? []),      // tolerate pre-v9 DBs
         completions: completions.error ? [] : (completions.data ?? []),   // tolerate pre-v13 DBs
         queue: queue.error ? [] : (queue.data ?? []),                     // tolerate pre-v14 DBs
+        roguelikes: roguelikes.error ? [] : (roguelikes.data ?? []),      // tolerate pre-v15 DBs
+        gauntletState: gauntletState.error ? [] : (gauntletState.data ?? []),
+        gauntletEvents,
+        futureBaselines: futureBaselines.error ? [] : (futureBaselines.data ?? []),   // tolerate pre-v17 DBs
       });
     }
 
@@ -390,14 +407,39 @@ export default async function handler(req, res) {
           const rows = appids.map((appid, idx) => ({
             steamid: sid, appid, position: idx,
             color: hexOk(body.colors?.[appid]) ? body.colors[appid] : null,
+            together: body.together?.[appid] === true,          // rotation marks (v17)
           }));
           let ins = await supabase.from("queue").insert(rows);
-          if (ins.error && /color/i.test(ins.error.message))   // pre-v15 DB: save without colors
-            ins = await supabase.from("queue").insert(rows.map(({ color, ...r }) => r));
+          if (ins.error && /together/i.test(ins.error.message))   // pre-v17 DB: save without rotation marks
+            ins = await supabase.from("queue").insert(rows.map(({ together, ...r }) => r));
+          if (ins.error && /color/i.test(ins.error.message))      // pre-colors DB: strip those too
+            ins = await supabase.from("queue").insert(rows.map(({ color, together, ...r }) => r));
           if (ins.error) return fail(500, ins.error.message);
         }
         return res.status(200).json({ ok: true });
       }
+      case "lockFutureBaseline": {
+        // Freeze the SERIES, not the inputs: the ghost must survive
+        // re-estimates, pace edits, and projection-model upgrades.
+        // Client-computed like bingo deals — club-trust model.
+        const sid = String(body.steamid || "");
+        if (!sid) return fail(400, "steamid required");
+        const series = body.series;
+        if (!series || !Array.isArray(series.completions) || !series.completions.length)
+          return fail(400, "series with completions required");
+        if (JSON.stringify(series).length > 60000) return fail(400, "baseline too large");
+        const w = await supabase.from("future_baselines").upsert({ steamid: sid, series, locked_at: new Date().toISOString() });
+        if (w.error) return fail(500, w.error.message + " — run migration-v17.sql?");
+        return res.status(200).json({ ok: true });
+      }
+
+      case "clearFutureBaseline": {
+        const sid = String(body.steamid || "");
+        const d = await supabase.from("future_baselines").delete().eq("steamid", sid);
+        if (d.error) return fail(500, d.error.message);
+        return res.status(200).json({ ok: true });
+      }
+
       // ---- monthly hunts ----
       case "createHunt": {
         if (!/^\d{4}-\d{2}$/.test(body.month ?? "")) return fail(400, "month must be YYYY-MM");
@@ -470,6 +512,90 @@ export default async function handler(req, res) {
         const w = await supabase.from("bingo_cards").insert(rows);
         if (w.error) return fail(500, `bingo_cards insert failed: ${w.error.message}`);
         return res.status(200).json({ ok: true, roundId: round.data.id, dealt: rows.length });
+      }
+
+      case "setRoguelike": {
+        // Designation + routes in one op: upsert the game's route list.
+        const appid = Number(body.appid);
+        if (!appid) return fail(400, "appid required");
+        const routes = (Array.isArray(body.routes) ? body.routes : [])
+          .map((r) => String(r).trim().slice(0, 60)).filter(Boolean).slice(0, 40);
+        const { error } = await supabase.from("roguelikes").upsert({ appid, routes });
+        if (error) return fail(500, error.message + " — run migration-v15.sql?");
+        return res.status(200).json({ ok: true, routes: routes.length });
+      }
+
+      case "removeRoguelike": {
+        const appid = Number(body.appid);
+        if (!appid) return fail(400, "appid required");
+        const d = await supabase.from("roguelikes").delete().eq("appid", appid);
+        if (d.error) return fail(500, d.error.message);
+        await supabase.from("gauntlet_state").delete().eq("appid", appid);   // pending runs on it dissolve
+        return res.status(200).json({ ok: true });
+      }
+
+      case "gauntletSpin": {
+        // Persist the wheel's verdict as the member's pending run. One
+        // run in flight per member — the state machine, enforced here.
+        if (!/^\d{17}$/.test(String(body.steamid ?? ""))) return fail(400, "Bad steamid");
+        const appid = Number(body.appid);
+        const route = String(body.route ?? "").slice(0, 60);
+        const rog = await supabase.from("roguelikes").select("appid").eq("appid", appid).maybeSingle();
+        if (rog.error) return fail(500, rog.error.message + " — run migration-v15.sql?");
+        if (!rog.data) return fail(400, "That game isn't designated as a roguelike");
+        const existing = await supabase.from("gauntlet_state").select("appid").eq("steamid", body.steamid).maybeSingle();
+        if (existing.data) return fail(400, "Already mid-run — resolve the current assignment first");
+        const w = await supabase.from("gauntlet_state").insert({ steamid: body.steamid, appid, route });
+        if (w.error) return fail(500, w.error.message);
+        return res.status(200).json({ ok: true });
+      }
+
+      case "gauntletResolve": {
+        // The event is written from the STATE row, not the request —
+        // the server remembers what was assigned; the click just says
+        // how it ended. Honor system by design: glory-only.
+        const sid = String(body.steamid ?? "");
+        const outcome = body.outcome === "win" ? "win" : body.outcome === "loss" ? "loss" : null;
+        if (!outcome) return fail(400, "outcome must be win or loss");
+        const st = await supabase.from("gauntlet_state").select("*").eq("steamid", sid).maybeSingle();
+        if (st.error) return fail(500, st.error.message + " — run migration-v15.sql?");
+        if (!st.data) return fail(400, "No run in flight for that member");
+        const ins = await supabase.from("gauntlet_events").insert({ steamid: sid, appid: st.data.appid, route: st.data.route, kind: outcome });
+        if (ins.error) return fail(500, ins.error.message);
+        await supabase.from("gauntlet_state").delete().eq("steamid", sid);
+        return res.status(200).json({ ok: true, outcome });
+      }
+
+      case "gauntletUndo": {
+        // Remove the member's most recent gauntlet event. If it was a
+        // resolve (win/loss) and they haven't spun again, RESTORE the
+        // pending assignment from it — a misclicked "Beat it" undoes
+        // back to exactly mid-run. Streaks recompute; nothing desyncs.
+        const sid = String(body.steamid ?? "");
+        const last = await supabase.from("gauntlet_events").select("*").eq("steamid", sid)
+          .order("at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+        if (last.error) return fail(500, last.error.message + " — run migration-v15.sql?");
+        if (!last.data) return fail(400, "No gauntlet history for that member");
+        const d = await supabase.from("gauntlet_events").delete().eq("id", last.data.id);
+        if (d.error) return fail(500, d.error.message);
+        const st = await supabase.from("gauntlet_state").select("steamid").eq("steamid", sid).maybeSingle();
+        let restored = false;
+        if (!st.data) {
+          const r = await supabase.from("gauntlet_state").insert({ steamid: sid, appid: last.data.appid, route: last.data.route });
+          restored = !r.error;
+        }
+        return res.status(200).json({ ok: true, undone: last.data.kind, appid: last.data.appid, restored });
+      }
+
+      case "gauntletErase": {
+        // Scorched earth for one member: their whole run log and any
+        // pending assignment. Built for wiping test records; confirm
+        // lives in the UI. Erased means gone — streaks recompute empty.
+        const sid = String(body.steamid ?? "");
+        const d = await supabase.from("gauntlet_events").delete().eq("steamid", sid);
+        if (d.error) return fail(500, d.error.message + " — run migration-v15.sql?");
+        await supabase.from("gauntlet_state").delete().eq("steamid", sid);
+        return res.status(200).json({ ok: true });
       }
 
       case "deleteBingo": {

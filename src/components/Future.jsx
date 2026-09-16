@@ -19,7 +19,7 @@
 // Colors are pickable per game (queue.color, v15; null = palette).
 // ---------------------------------------------------------------
 import { useEffect, useMemo, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Customized } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea, ResponsiveContainer, Customized } from "recharts";
 import { S, Slider } from "./ui.jsx";
 import { chartInk } from "../lib/themes.js";
 import { projectQueue, chartChunks } from "../lib/stats.js";
@@ -131,6 +131,9 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
   const serverColors = useMemo(() =>
     Object.fromEntries(serverRows.filter((q) => hexOk(q.color)).map((q) => [Number(q.appid), q.color])),
     [serverRows]);
+  const serverTog = useMemo(() =>
+    Object.fromEntries(serverRows.filter((q) => q.together).map((q) => [Number(q.appid), true])),
+    [serverRows]);
   const qKey = serverQ.join(",");
   const colorKeyOf = (ids, m) => ids.map((id) => (hexOk(m[id]) ? m[id].toLowerCase() : "")).join(",");
   const serverWd = Number(member?.play_weekday ?? 2);
@@ -138,15 +141,18 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
 
   const [draft, setDraft] = useState(serverQ);
   const [colors, setColors] = useState(serverColors);
+  const [tog, setTog] = useState(serverTog);   // ∥ rotation marks (draft)
   const [wd, setWd] = useState(serverWd);
   const [we, setWe] = useState(serverWe);
   const [drag, setDrag] = useState(null);
   const serverColorKey = colorKeyOf(serverQ, serverColors);
-  useEffect(() => { setDraft(serverQ); setColors(serverColors); setWd(serverWd); setWe(serverWe); setDrag(null); },
+  const togKeyOf = (ids, m) => ids.filter((id) => m[id]).join(",");
+  const serverTogKey = togKeyOf(serverQ, serverTog);
+  useEffect(() => { setDraft(serverQ); setColors(serverColors); setTog(serverTog); setWd(serverWd); setWe(serverWe); setDrag(null); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spot, qKey, serverColorKey, serverWd, serverWe]);   // reseed on member switch or external change
+    [spot, qKey, serverColorKey, serverTogKey, serverWd, serverWe]);   // reseed on member switch or external change
   const dirty = draft.join(",") !== qKey || colorKeyOf(draft, colors) !== colorKeyOf(draft, serverColors)
-    || wd !== serverWd || we !== serverWe;
+    || togKeyOf(draft, tog) !== togKeyOf(draft, serverTog) || wd !== serverWd || we !== serverWe;
 
   // ---- rows for everything drafted (editor shows all; projection filters) ----
   const qRows = draft.map((appid) => {
@@ -160,11 +166,11 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
   const proj = useMemo(() => {
     const entries = qRows.filter((r) => !r.skip).map((r) => ({
       appid: r.appid, name: r.g.name, ptsLeft: r.ptsLeft, pool: r.g.pool, effHours: r.g.hours,
-      achLeft: r.p.missing.length, achTotal: r.g.ach.length,
+      achLeft: r.p.missing.length, achTotal: r.g.ach.length, together: !!tog[r.appid],
     }));
     return projectQueue({ entries, weekday: wd, weekend: we });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.join(","), wd, we, spot, stats.games]);
+  }, [draft.join(","), togKeyOf(draft, tog), wd, we, spot, stats.games]);
 
   const colorOf = useMemo(() =>
     Object.fromEntries(draft.map((id, i) => [id, hexOk(colors[id]) ? colors[id] : PALETTE[i % PALETTE.length]])),
@@ -239,6 +245,7 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
     await mutate("saveFuture", {
       steamid: spot, appids: draft, weekday: wd, weekend: we,
       colors: Object.fromEntries(draft.map((id) => [id, hexOk(colors[id]) ? colors[id] : null])),
+      together: Object.fromEntries(draft.map((id) => [id, !!tog[id]])),
     }, () => "Future locked in — the calendar is law 📅");
   }
 
@@ -252,8 +259,65 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
     const g = byKey[item?.dataKey];
     if (g) return [`${v.toLocaleString()} / ${g.pool.toLocaleString()} pts · ≈${achApprox(v, g.ptsLeft, g.achLeft)} of ${g.achTotal} ach`, g.name];
     if (item?.dataKey === "done") return [v, "Total 100%s"];
+    if (item?.dataKey === "ghost") return [v, "Locked plan"];
     return [v, name];
   };
+
+  // ---- THE LOCKED PLAN (baseline ghost) ----
+  // The frozen SERIES from lock time — recomputing from inputs would
+  // let re-estimates and model changes quietly rewrite what you signed
+  // up for. The ghost only moves when you re-lock.
+  const baseline = (meta.futureBaselines ?? []).find((b) => b.steamid === spot) ?? null;
+  const bl = baseline?.series ?? null;
+  const ghostAt = (t) => bl ? (bl.lockBase ?? 0) + bl.completions.filter((c) => c.t <= t).length : 0;
+  const chunksG = useMemo(() => {
+    if (!bl) return chunks;
+    return chunks.map((ch) => {
+      const rows = [...ch.rows, { t: ch.a, ghost: ghostAt(ch.a) }];
+      for (const c of bl.completions) if (c.t > ch.a && c.t <= ch.b) rows.push({ t: c.t, ghost: ghostAt(c.t) });
+      rows.push({ t: ch.b, ghost: ghostAt(ch.b) });
+      rows.sort((x, y) => x.t - y.t);
+      return { ...ch, rows };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunks, baseline?.locked_at]);
+  const ghostMax = bl ? (bl.lockBase ?? 0) + bl.completions.length : 0;
+  const ghostMin = bl ? (bl.lockBase ?? 0) : basePerfects;
+  // ahead/behind: when did the plan expect you to reach your CURRENT count?
+  const pace = useMemo(() => {
+    if (!bl) return null;
+    const nowT = Date.now();
+    const gained = basePerfects - (bl.lockBase ?? 0);            // real perfects since lock
+    if (gained < 0) return null;                                 // roster/count weirdness — stay quiet
+    if (gained >= bl.completions.length)
+      return { label: `🏁 plan complete — ${gained - bl.completions.length ? `+${gained - bl.completions.length} beyond it` : "right on the line"}`, tone: "var(--accent)" };
+    const tStar = gained === 0 ? Date.parse(baseline.locked_at) : bl.completions[gained - 1].t;
+    const gapDays = Math.round((tStar - nowT) / 86400000);
+    if (gapDays > 0) return { label: `▲ ${gapDays}d ahead of plan`, tone: "#6BC46D" };
+    if (gapDays < 0) return { label: `▼ ${-gapDays}d behind plan`, tone: "var(--err-border, #E05B5B)" };
+    return { label: "● on pace", tone: "var(--muted)" };
+  }, [bl, basePerfects, baseline?.locked_at]);
+  const queueDrift = bl ? (() => {
+    const locked = new Set(bl.queue ?? []);
+    const live = proj.perGame.map((g) => g.appid);
+    const added = live.filter((a) => !locked.has(a)).length;
+    const removed = [...locked].filter((a) => !live.includes(a)).length;
+    return added || removed ? `queue changed since: ${added ? `+${added}` : ""}${added && removed ? " / " : ""}${removed ? `−${removed}` : ""}` : null;
+  })() : null;
+  const lockPlan = () => mutate("lockFutureBaseline", { steamid: spot, series: {
+    lockedAt: Date.now(), pace: { wd, we }, lockBase: basePerfects,
+    queue: proj.perGame.map((g) => g.appid),
+    completions: proj.completions.map(({ appid, name, t }) => ({ appid, name, t })),
+  } }, () => "Plan locked 🔒 — the ghost will remember this pace.");
+  const parallelSpans = useMemo(() => {
+    const spans = []; let cur = null;
+    for (const d of proj.days) {
+      if ((d.also?.length ?? 0) > 0) { if (!cur) cur = { a: d.t, b: d.t + 86400000 }; else cur.b = d.t + 86400000; }
+      else if (cur) { spans.push(cur); cur = null; }
+    }
+    if (cur) spans.push(cur);
+    return spans;
+  }, [proj]);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -294,9 +358,31 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
       {/* ---- sawtooth (one panel, or half-year panels for long plans) ---- */}
       {chunks.length > 0 && !proj.idle && (
         <div className="panel" style={S.panel}>
-          <div style={{ ...S.label, marginBottom: 12 }}>The burndown — points left in the game you're on</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={S.label}>The burndown — points left in the game you're on</span>
+            {pace && <span style={{ fontSize: 12, fontWeight: 700, color: pace.tone }}>{pace.label}</span>}
+            <span style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              {baseline ? (
+                <>
+                  <span style={{ fontSize: 11, color: "var(--faint)" }}>
+                    plan locked {fmtDY(Date.parse(baseline.locked_at))} · {bl.pace?.wd ?? "?"}/{bl.pace?.we ?? "?"}h
+                    {queueDrift && <> · {queueDrift}</>}
+                  </span>
+                  <button style={{ ...S.btnGhost, padding: "2px 8px", fontSize: 11 }} disabled={busy || dirty}
+                    title={dirty ? "Save the queue first" : "Replace the ghost with today's projection"}
+                    onClick={lockPlan}>Re-baseline</button>
+                  <button style={{ ...S.btnGhost, padding: "2px 8px", fontSize: 11, color: "var(--faint)" }} disabled={busy}
+                    onClick={() => mutate("clearFutureBaseline", { steamid: spot }, () => "Ghost released.")}>✕</button>
+                </>
+              ) : (
+                <button style={{ ...S.btnGhost, padding: "2px 8px", fontSize: 11 }} disabled={busy || dirty || !proj.completions.length}
+                  title={dirty ? "Save the queue first" : "Freeze today's projection as the plan to beat"}
+                  onClick={lockPlan}>🔒 Lock in this plan</button>
+              )}
+            </span>
+          </div>
           <div style={{ display: "grid", gap: 18 }}>
-            {chunks.map((ch) => (
+            {chunksG.map((ch) => (
               <div key={ch.a}>
                 {chunks.length > 1 && (
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 4 }}>{ch.label}</div>
@@ -308,10 +394,15 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                       ticks={ch.ticks} stroke={ink.axis} fontSize={11} tickFormatter={fmtD} />
                     <YAxis yAxisId="pts" domain={[0, yMax]} stroke={ink.axis} fontSize={11}
                       tickFormatter={(v) => v.toLocaleString()} />
-                    <YAxis yAxisId="done" orientation="right" domain={[basePerfects, Math.max(doneMax, basePerfects + 1)]}
+                    <YAxis yAxisId="done" orientation="right"
+                      domain={[Math.min(basePerfects, ghostMin), Math.max(doneMax, ghostMax, basePerfects + 1)]}
                       stroke={ink.axis} fontSize={11} allowDecimals={false} />
                     <Tooltip contentStyle={{ background: "var(--header)", border: "1px solid var(--border)", borderRadius: 8 }}
                       labelFormatter={fmtDY} formatter={tooltipFmt} />
+                    {parallelSpans.filter((sp) => sp.b > ch.a && sp.a < ch.b).map((sp, k) => (
+                      <ReferenceArea key={`par${k}`} yAxisId="pts" x1={Math.max(sp.a, ch.a)} x2={Math.min(sp.b, ch.b)}
+                        fill="var(--accent)" fillOpacity={0.05} strokeOpacity={0} />
+                    ))}
                     {proj.perGame.map((g) => (
                       <Line key={g.appid} yAxisId="pts" type="linear" dataKey={`g${g.appid}`} name={g.name}
                         stroke={colorOf[g.appid]} strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
@@ -319,6 +410,9 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                     <Line yAxisId="done" type="stepAfter" dataKey="done" name="Total 100%s"
                       stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="5 4" dot={false}
                       connectNulls isAnimationActive={false} />
+                    {bl && <Line yAxisId="done" type="stepAfter" dataKey="ghost" name="Locked plan"
+                      stroke="var(--faint)" strokeWidth={2} strokeDasharray="2 5" strokeOpacity={0.8}
+                      dot={false} connectNulls isAnimationActive={false} />}
                     <Customized component={(cp) => (
                       <PostersLayer {...cp} posters={ch.posters} coverOf={coverOf} colorOf={colorOf} />
                     )} />
@@ -357,7 +451,7 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                       : lastDone ? hexA(colorOf[lastDone.appid] ?? "#888888", "2E") : "transparent";
                     const title = c.off ? fmtDY(c.t)
                       : nDone ? `${fmtDY(c.t)} — 🏁 ${c.done.map((a) => infoOf[a]?.name ?? a).join(" + ")} done!`
-                      : info ? `${fmtDY(c.t)} — ${info.name}: ${c.ptsEnd.toLocaleString()} of ${info.pool.toLocaleString()} pts left (≈${achApprox(c.ptsEnd, info.ptsLeft, info.achLeft)} of ${info.achTotal} ach)`
+                      : info ? `${fmtDY(c.t)} — ${info.name}: ${c.ptsEnd.toLocaleString()} of ${info.pool.toLocaleString()} pts left (≈${achApprox(c.ptsEnd, info.ptsLeft, info.achLeft)} of ${info.achTotal} ach)${c.also?.length ? ` · ∥ alongside ${c.also.map((a) => infoOf[a]?.name ?? a).join(", ")}` : ""}`
                       : fmtDY(c.t);
                     return (
                       <div key={c.t} title={title} style={{
@@ -371,7 +465,7 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                         {nDone > 0
                           ? <div style={{ fontSize: 12 }}>🏁{nDone > 1 ? `×${nDone}` : ""}</div>
                           : info
-                            ? <div style={{ color: "var(--ink)", fontWeight: 600 }}>{c.ptsEnd.toLocaleString()}</div>
+                            ? <div style={{ color: "var(--ink)", fontWeight: 600 }}>{c.ptsEnd.toLocaleString()}{c.also?.length ? <span style={{ color: "var(--accent)", fontWeight: 700 }}> ∥</span> : null}</div>
                             : null}
                         {info && (
                           <div style={{ marginTop: "auto", height: 3, background: "var(--chip)", borderRadius: 2, overflow: "hidden" }}>
@@ -464,6 +558,9 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                 {r.skip === "done" ? "✓ done" : r.skip === "unrated" ? "⏱ no hours" : r.skip === "gone" ? "gone"
                   : <>{r.ptsLeft.toLocaleString()} / {r.g.pool.toLocaleString()} pts · ~{fmtH((r.g.hours * r.ptsLeft) / r.g.pool)}</>}
               </span>
+              <button style={{ ...miniBtn, ...(tog[r.appid] ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : { color: "var(--faint)" }) }}
+                title={tog[r.appid] ? "In the rotation — sharing your play hours" : "Mark to play in rotation (2+ marks split each day's hours)"}
+                onClick={() => setTog({ ...tog, [r.appid]: !tog[r.appid] })}>∥</button>
               <button style={miniBtn} disabled={i === 0} onClick={() => setDraft(move(draft, i, i - 1))}>▲</button>
               <button style={miniBtn} disabled={i === qRows.length - 1} onClick={() => setDraft(move(draft, i, i + 1))}>▼</button>
               <button style={miniBtn} onClick={() => setDraft(draft.filter((a) => a !== r.appid))}>✕</button>
