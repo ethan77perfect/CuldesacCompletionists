@@ -38,7 +38,7 @@ async function lookupGame(appid, steamKey) {
   ]);
   const j = await schemaR.json().catch(() => null);
   const storeJ = await storeR.json().catch(() => null);
-  const schemaName = j?.game?.gameName;
+  const schemaName = j?.game?.gameName;``
   const storeName = storeJ?.[appid]?.success ? storeJ[appid]?.data?.name : null;
   const isPlaceholder = /steamtempholder|valvetestapp|untitled/i.test(schemaName ?? "");
   return {
