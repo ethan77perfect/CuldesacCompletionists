@@ -25,7 +25,7 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData } from "../lib/steamFetch.js";
-import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache } from "../lib/clubSync.js";
+import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
 const tzPart = (type) =>
@@ -98,7 +98,10 @@ export default async function handler(req, res) {
   // lives in the payload itself (gameFetchedAt: appid → epoch); games
   // missing from the cache rank stalest of all. Repair by hand anytime:
   // /api/cron?secret=...&quiet=1, repeatedly, until staleRemaining: 0.
-  const GAME_BUDGET = 60;   // ≈ 730 calls/run at 10 members — 2 nightly passes cover ~120 games
+  // Member-aware: ~900 Steam calls of work per run, however many games
+  // that buys at (2 + members) calls each. The old fixed 60 blew the
+  // 60s ceiling around 15 members. See gameBudget in lib/clubSync.js.
+  const GAME_BUDGET = gameBudget(steamids.length, { callBudget: 900, max: 75 });
   const prevPayload0 = prevCache.data?.payload ?? null;
   const clubIds = new Set(appids.map(Number));
   const nowEpoch = Math.floor(Date.now() / 1000);
@@ -231,7 +234,7 @@ export default async function handler(req, res) {
   // ReferenceError that 500'd every run AFTER its work was done.
   const staleRemaining = appids.filter((a) => (data.gameFetchedAt[a] ?? 0) < nowEpoch - STALE_AFTER).length;
   return res.status(200).json({
-    ok: true, snapshotted: rows.length, failedRequests: data.failed,
+    ok: true, budget: GAME_BUDGET, snapshotted: rows.length, failedRequests: data.failed,
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
     ownedCarried: carried.owned, playersCarried: carried.players, gamesVetoed: carried.gamesVetoed ?? 0,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,

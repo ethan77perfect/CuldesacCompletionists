@@ -33,10 +33,10 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData, fetchRecentAppids } from "../lib/steamFetch.js";
-import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache } from "../lib/clubSync.js";
+import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
-const GAME_BUDGET = 36;          // ≈ 440 Steam calls at 10 members — fast, throttle-safe
+// GAME_BUDGET is computed per-request from the member count — see below.
 const STALE_AFTER = 6 * 3600;    // dormant games: touched within 6h don't refetch
 const HOT_STALE = 12 * 60;       // actively-played games go stale in minutes — unlocks surface fast
 const RECENT_EVERY = 5 * 60;     // re-ask Steam "who's playing what" at most every 5 min (1 call/member)
@@ -67,6 +67,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "DB read failed — run migration-v4.sql?" });
 
   const steamids = (members.data ?? []).map((m) => m.steamid);
+  // ~700-call budget: snappier than the cron's 900 since a visitor's
+  // poll loop is waiting on each slice. See gameBudget in clubSync.
+  const GAME_BUDGET = gameBudget(steamids.length, { callBudget: 700, max: 45 });
   const appids = (gamesList.data ?? []).map((g) => String(g.appid));
   if (!steamids.length || !appids.length)
     return res.status(200).json({ ok: true, fresh: true, staleRemaining: 0 });
@@ -187,7 +190,7 @@ export default async function handler(req, res) {
 
   const staleRemaining = Math.max(0, staleCount - gotIds.size);
   return res.status(200).json({
-    ok: true, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
+    ok: true, budget: GAME_BUDGET, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
     ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0, gamesVetoed: carried?.gamesVetoed ?? 0,
     ...(forceRaw ? { forcedRemaining } : {}),
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,

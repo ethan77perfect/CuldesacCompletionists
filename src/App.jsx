@@ -41,6 +41,7 @@ import Hunt from "./components/Hunt.jsx";
 import Challenges from "./components/Challenges.jsx";
 import Bingo from "./components/Bingo.jsx";
 import Trophies from "./components/Trophies.jsx";
+import Gauntlet from "./components/Gauntlet.jsx";
 import { THEMES, SURFACES, MODES, DEFAULT_THEME, DEFAULT_SURFACE, DEFAULT_MODE, applyTheme, applySurface } from "./lib/themes.js";
 
 // Module-scope on purpose: BOTH retry loops in loadAll use this (the
@@ -74,7 +75,7 @@ function useRoute() {
 const NAV = [
   ["home", "Home"], ["board", "Leaderboard"], ["library", "Library"],
   ["hunt", "Hunt"], ["bingo", "Bingo"], ["wheel", "Wheel"], ["century", "Century"], ["burndown", "Burndown"], ["future", "Future"], ["challenges", "Challenges"],
-  ["stats", "Stats"], ["compare", "Compare"], ["trophies", "Trophies"],
+  ["stats", "Stats"], ["compare", "Compare"], ["trophies", "Trophies"], ["gauntlet", "Gauntlet"],
   ["backlog", "Backlog"], ["settings", "Settings"],
 ];
 
@@ -233,7 +234,11 @@ export default function App() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      if (successMsg && !opts.quiet) setNotice(successMsg(j));
+      // Strings and functions are both legal here — a string success
+      // message used to crash AFTER a successful write ("x is not a
+      // function"), skipping the reload and making the change look
+      // failed until a manual retry refetched it.
+      if (successMsg && !opts.quiet) setNotice(typeof successMsg === "function" ? successMsg(j) : successMsg);
       // Only game-set changes need the full Steam pipeline (with its
       // snapshot-repaint-then-live-refresh dance). Everything else —
       // century picks, covers, contracts, votes, ratings, settings —
@@ -449,6 +454,7 @@ export default function App() {
         {stats && !empty && page === "hunt" && <Hunt stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "bingo" && <Bingo stats={stats} meta={meta} mutate={mutate} busy={busy} nav={nav} />}
         {stats && !empty && page === "trophies" && <Trophies stats={stats} meta={meta} nav={nav} />}
+        {stats && !empty && page === "gauntlet" && <Gauntlet stats={stats} meta={meta} mutate={mutate} busy={busy} />}
         {stats && !empty && page === "challenges" && <Challenges stats={stats} meta={meta} mutate={mutate} busy={busy} />}
 
         {stats && !empty && page === "board" && (
