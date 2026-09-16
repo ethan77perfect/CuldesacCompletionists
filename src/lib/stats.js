@@ -753,10 +753,15 @@ export function chartChunks(proj, basePerfects = 0) {
   const lastT = rowsAll[rowsAll.length - 1].t;
   const doneAt = (t) => basePerfects + proj.completions.filter((c) => c.t <= t).length;
 
+  // Breathing room: the plan's final flag used to sit jammed against
+  // the right edge. The last panel now runs ~2 weeks (or 6% of the
+  // plan, whichever is more) past the final completion — the done
+  // step holds its value across the pad, the lines simply rest.
+  const padded = lastT + Math.max(14 * DAY, Math.round((lastT - t0) * 0.06));
   const bounds = [t0];
   if (lastT - t0 > 215 * DAY)
     for (let k = 6; addMonths(t0, k) < lastT; k += 6) bounds.push(addMonths(t0, k));
-  bounds.push(lastT);
+  bounds.push(padded);
 
   return bounds.slice(0, -1).map((a, bi) => {
     const b = bounds[bi + 1];
@@ -778,8 +783,9 @@ export function chartChunks(proj, basePerfects = 0) {
     const posters = proj.perGame
       .filter((g) => g.startT >= a && g.startT < b)
       .map((g) => ({ appid: g.appid, name: g.name, t: g.startT, pts: g.ptsLeft }));
-    const carried = proj.perGame.find((g) => g.startT < a && (g.endT == null || g.endT > a));
-    if (carried) {
+    // ALL games mid-flight at the boundary carry a poster over — with
+    // lanes there can be up to three, and `find` used to keep just one.
+    for (const carried of proj.perGame.filter((g) => g.startT !== null && g.startT < a && (g.endT == null || g.endT > a))) {
       const sample = rowsAll.find((r) => r.t === a && r[`g${carried.appid}`] != null);
       if (sample && sample[`g${carried.appid}`] > 0)
         posters.unshift({ appid: carried.appid, name: carried.name, t: a, pts: sample[`g${carried.appid}`] });

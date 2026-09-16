@@ -47,7 +47,7 @@ const addMonths = (t, n) => { const d = new Date(t); d.setMonth(d.getMonth() + n
 const achApprox = (v, ptsLeft0, achLeft0) =>
   v <= 0 ? 0 : Math.max(1, Math.round((achLeft0 * v) / ptsLeft0));
 
-const POSTER = { w: 26, h: 39 };
+const POSTER = { w: 34, h: 51 };   // ~30% larger — the icons are the point
 const posterUrls = (appid, override) => [
   ...(override ? [override] : []),
   `https://steamcdn-a.akamaihd.net/steam/apps/${appid}/library_600x900.jpg`,
@@ -88,16 +88,31 @@ function PostersLayer({ posters, coverOf, colorOf, xAxisMap, yAxisMap, offset })
   const yAx = (yAxisMap ?? {})["pts"] ?? Object.values(yAxisMap ?? {})[0];
   const ys = yAx?.scale;
   if (!xs || !ys || !offset) return null;
+  // With lanes, several games can anchor at the SAME instant (all lane
+  // heads at day zero) — naive placement piles their posters into one
+  // unreadable stack. Greedy de-collision: place left-to-right; anyone
+  // overlapping an earlier poster steps down a rung, and when the
+  // chart floor stops them, steps right instead. The taller chart is
+  // what buys the rungs.
+  const placed = [];
+  const floor = offset.top + offset.height - POSTER.h - 2;
+  for (const p of [...posters].sort((a, b) => a.t - b.t || b.pts - a.pts)) {
+    let px = xs(p.t) + 4;
+    px = Math.max(offset.left + 2, Math.min(px, offset.left + offset.width - POSTER.w - 2));
+    let py = Math.max(offset.top + 2, ys(p.pts) - POSTER.h - 6);
+    let guard = 0;
+    while (guard++ < 24 && placed.some((q) => Math.abs(q.px - px) < POSTER.w + 4 && Math.abs(q.py - py) < POSTER.h + 4)) {
+      py += POSTER.h + 6;
+      if (py > floor) { py = Math.max(offset.top + 2, ys(p.pts) - POSTER.h - 6); px += POSTER.w + 6; }
+    }
+    placed.push({ ...p, px, py });
+  }
   return (
     <g>
-      {posters.map((p) => {
-        let px = xs(p.t) + 4;
-        px = Math.max(offset.left + 2, Math.min(px, offset.left + offset.width - POSTER.w - 2));
-        let py = ys(p.pts) - POSTER.h - 6;
-        py = Math.max(offset.top + 2, py);
-        return <SvgPoster key={`${p.appid}-${p.t}`} x={px} y={py}
-          urls={posterUrls(p.appid, coverOf[p.appid])} stroke={colorOf[p.appid] ?? "#888"} title={p.name} />;
-      })}
+      {placed.map((p) => (
+        <SvgPoster key={`${p.appid}-${p.t}`} x={p.px} y={p.py}
+          urls={posterUrls(p.appid, coverOf[p.appid])} stroke={colorOf[p.appid] ?? "#888"} title={p.name} />
+      ))}
     </g>
   );
 }
@@ -404,7 +419,7 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
                 {chunks.length > 1 && (
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)", marginBottom: 4 }}>{ch.label}</div>
                 )}
-                <ResponsiveContainer width="100%" height={chunks.length > 1 ? 230 : 280}>
+                <ResponsiveContainer width="100%" height={chunks.length > 1 ? 300 : 380}>
                   <LineChart data={ch.rows}>
                     <CartesianGrid stroke={ink.grid} vertical={false} />
                     <XAxis dataKey="t" type="number" domain={[ch.a, ch.b]} scale="linear"
