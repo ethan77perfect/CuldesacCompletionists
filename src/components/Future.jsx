@@ -131,28 +131,43 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
   const serverColors = useMemo(() =>
     Object.fromEntries(serverRows.filter((q) => hexOk(q.color)).map((q) => [Number(q.appid), q.color])),
     [serverRows]);
-  const serverTog = useMemo(() =>
-    Object.fromEntries(serverRows.filter((q) => q.together).map((q) => [Number(q.appid), true])),
-    [serverRows]);
+  // three independent columns: rows grouped by lane (0-2), ordered by
+  // position within each — the read-side mirror of saveFuture v18
+  const serverLanes = useMemo(() => {
+    const L = [[], [], []];
+    for (const q of serverRows) L[Math.max(0, Math.min(2, Number(q.lane ?? 0)))].push(Number(q.appid));
+    return L;
+  }, [serverRows]);
   const qKey = serverQ.join(",");
   const colorKeyOf = (ids, m) => ids.map((id) => (hexOk(m[id]) ? m[id].toLowerCase() : "")).join(",");
   const serverWd = Number(member?.play_weekday ?? 2);
   const serverWe = Number(member?.play_weekend ?? 4);
 
-  const [draft, setDraft] = useState(serverQ);
+  const [draftLanes, setDraftLanes] = useState(serverLanes);
+  const draft = useMemo(() => draftLanes.flat(), [draftLanes]);   // flat view — read-side consumers unchanged
   const [colors, setColors] = useState(serverColors);
-  const [tog, setTog] = useState(serverTog);   // ∥ rotation marks (draft)
   const [wd, setWd] = useState(serverWd);
   const [we, setWe] = useState(serverWe);
   const [drag, setDrag] = useState(null);
   const serverColorKey = colorKeyOf(serverQ, serverColors);
-  const togKeyOf = (ids, m) => ids.filter((id) => m[id]).join(",");
-  const serverTogKey = togKeyOf(serverQ, serverTog);
-  useEffect(() => { setDraft(serverQ); setColors(serverColors); setTog(serverTog); setWd(serverWd); setWe(serverWe); setDrag(null); },
+  const serverLanesKey = JSON.stringify(serverLanes);
+  useEffect(() => { setDraftLanes(serverLanes); setColors(serverColors); setWd(serverWd); setWe(serverWe); setDrag(null); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spot, qKey, serverColorKey, serverTogKey, serverWd, serverWe]);   // reseed on member switch or external change
-  const dirty = draft.join(",") !== qKey || colorKeyOf(draft, colors) !== colorKeyOf(draft, serverColors)
-    || togKeyOf(draft, tog) !== togKeyOf(draft, serverTog) || wd !== serverWd || we !== serverWe;
+    [spot, serverLanesKey, serverColorKey, serverWd, serverWe]);   // reseed on member switch or external change
+  const dirty = JSON.stringify(draftLanes) !== serverLanesKey || colorKeyOf(draft, colors) !== colorKeyOf(draft, serverColors)
+    || wd !== serverWd || we !== serverWe;
+  // lane surgery helpers — every mutation is a fresh lanes array
+  const laneOf = useMemo(() => {
+    const m = {};
+    draftLanes.forEach((arr, L) => arr.forEach((a) => { m[a] = L; }));
+    return m;
+  }, [draftLanes]);
+  const lanesWithout = (lanes, appid) => lanes.map((arr) => arr.filter((a) => a !== appid));
+  const insertAt = (lanes, L, i, appid) => {
+    const next = lanesWithout(lanes, appid).map((arr) => [...arr]);
+    next[L].splice(Math.max(0, Math.min(i, next[L].length)), 0, appid);
+    return next;
+  };
 
   // ---- rows for everything drafted (editor shows all; projection filters) ----
   const qRows = draft.map((appid) => {
@@ -163,14 +178,16 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
     return { appid, g, p, ptsLeft, skip };
   });
 
+  const qRowByApp = useMemo(() => Object.fromEntries(qRows.map((r) => [r.appid, r])), [qRows]);
+
   const proj = useMemo(() => {
     const entries = qRows.filter((r) => !r.skip).map((r) => ({
       appid: r.appid, name: r.g.name, ptsLeft: r.ptsLeft, pool: r.g.pool, effHours: r.g.hours,
-      achLeft: r.p.missing.length, achTotal: r.g.ach.length, together: !!tog[r.appid],
+      achLeft: r.p.missing.length, achTotal: r.g.ach.length, lane: laneOf[r.appid] ?? 0,
     }));
     return projectQueue({ entries, weekday: wd, weekend: we });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.join(","), togKeyOf(draft, tog), wd, we, spot, stats.games]);
+  }, [JSON.stringify(draftLanes), wd, we, spot, stats.games]);
 
   const colorOf = useMemo(() =>
     Object.fromEntries(draft.map((id, i) => [id, hexOk(colors[id]) ? colors[id] : PALETTE[i % PALETTE.length]])),
@@ -245,7 +262,7 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
     await mutate("saveFuture", {
       steamid: spot, appids: draft, weekday: wd, weekend: we,
       colors: Object.fromEntries(draft.map((id) => [id, hexOk(colors[id]) ? colors[id] : null])),
-      together: Object.fromEntries(draft.map((id) => [id, !!tog[id]])),
+      lanes: draftLanes,
     }, () => "Future locked in — the calendar is law 📅");
   }
 
@@ -527,43 +544,69 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
 
       {/* ---- queue editor + bench ---- */}
       <div className="panel" style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 4 }}>The queue — drag to reorder</div>
+        <div style={{ ...S.label, marginBottom: 4 }}>The queue — three columns, played in parallel</div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
-          Top of the list burns first. Arrows work too (phones can't drag). Tap a game's swatch to pick its color.
+          The top game of every non-empty column runs NOW, splitting your hours. When it's done, the game
+          below it takes over — each column minds its own business. Empty columns are fine.
+          Drag between columns, or use ⇢ to send a game to the next one. Tap a swatch to pick a color.
         </div>
-        <div style={{ display: "grid", gap: 2 }}>
-          {qRows.length === 0 && (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>
-              Nothing queued yet — pull games up from the bench below.
-            </div>
-          )}
-          {qRows.map((r, i) => (
-            <div key={r.appid} draggable
-              onDragStart={() => setDrag(i)}
-              onDragOver={(e) => { e.preventDefault(); if (drag !== null && drag !== i) { setDraft(move(draft, drag, i)); setDrag(i); } }}
-              onDragEnd={() => setDrag(null)}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 8,
-                background: drag === i ? "var(--chip)" : "transparent",
-                opacity: r.skip ? 0.55 : 1, cursor: "grab" }}>
-              <span style={{ color: "var(--faint)", cursor: "grab" }}>≡</span>
-              <input type="color" value={colorOf[r.appid]} title="Pick this game's color"
-                onChange={(e) => setColors({ ...colors, [r.appid]: e.target.value })}
-                style={{ width: 24, height: 24, padding: 0, border: "1px solid var(--border2)",
-                  borderRadius: 6, background: "none", cursor: "pointer", flex: "0 0 auto" }} />
-              <Thumb key={`t${r.appid}`} appid={r.appid} override={coverOf[r.appid]} />
-              <span style={{ flex: "1 1 120px", minWidth: 0 }}>
-                {gameLink(r.appid, r.g?.name ?? `App ${r.appid}`, r.skip === "done")}
-              </span>
-              <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                {r.skip === "done" ? "✓ done" : r.skip === "unrated" ? "⏱ no hours" : r.skip === "gone" ? "gone"
-                  : <>{r.ptsLeft.toLocaleString()} / {r.g.pool.toLocaleString()} pts · ~{fmtH((r.g.hours * r.ptsLeft) / r.g.pool)}</>}
-              </span>
-              <button style={{ ...miniBtn, ...(tog[r.appid] ? { color: "var(--accent)", borderColor: "var(--accent-border)" } : { color: "var(--faint)" }) }}
-                title={tog[r.appid] ? "In the rotation — sharing your play hours" : "Mark to play in rotation (2+ marks split each day's hours)"}
-                onClick={() => setTog({ ...tog, [r.appid]: !tog[r.appid] })}>∥</button>
-              <button style={miniBtn} disabled={i === 0} onClick={() => setDraft(move(draft, i, i - 1))}>▲</button>
-              <button style={miniBtn} disabled={i === qRows.length - 1} onClick={() => setDraft(move(draft, i, i + 1))}>▼</button>
-              <button style={miniBtn} onClick={() => setDraft(draft.filter((a) => a !== r.appid))}>✕</button>
+        {qRows.length === 0 && (
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>
+            Nothing queued yet — pull games up from the bench below.
+          </div>
+        )}
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))" }}>
+          {draftLanes.map((laneIds, L) => (
+            <div key={L}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => { if (drag) { setDraftLanes(insertAt(draftLanes, L, laneIds.length, drag.appid)); setDrag(null); } }}
+              style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: 8, minHeight: 90,
+                display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--faint)", letterSpacing: "0.06em", marginBottom: 4 }}>
+                COLUMN {L + 1}{laneIds.length > 0 && <span style={{ color: "var(--accent)" }}> · ▶ {gameById[laneIds.find((a) => !qRowByApp[a]?.skip)]?.name ?? "—"}</span>}
+              </div>
+              {laneIds.length === 0 && (
+                <div style={{ fontSize: 12, color: "var(--faint)", padding: "14px 6px", textAlign: "center" }}>
+                  empty — and that's fine
+                </div>
+              )}
+              {laneIds.map((appid, i) => {
+                const r = qRowByApp[appid];
+                if (!r) return null;
+                return (
+                  <div key={appid} draggable
+                    onDragStart={() => setDrag({ appid, L, i })}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (drag && drag.appid !== appid) { setDraftLanes(insertAt(draftLanes, L, i, drag.appid)); setDrag({ appid: drag.appid, L, i }); }
+                    }}
+                    onDragEnd={() => setDrag(null)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 6px", borderRadius: 8,
+                      background: drag?.appid === appid ? "var(--chip)" : "transparent",
+                      opacity: r.skip ? 0.55 : 1, cursor: "grab" }}>
+                    <span style={{ color: "var(--faint)", cursor: "grab" }}>≡</span>
+                    <input type="color" value={colorOf[appid]} title="Pick this game's color"
+                      onChange={(e) => setColors({ ...colors, [appid]: e.target.value })}
+                      style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border2)",
+                        borderRadius: 6, background: "none", cursor: "pointer", flex: "0 0 auto" }} />
+                    <Thumb key={`t${appid}`} appid={appid} override={coverOf[appid]} />
+                    <span style={{ flex: "1 1 80px", minWidth: 0 }}>
+                      {gameLink(appid, r.g?.name ?? `App ${appid}`, r.skip === "done")}
+                      <span style={{ display: "block", fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {r.skip === "done" ? "✓ done" : r.skip === "unrated" ? "⏱ no hours" : r.skip === "gone" ? "gone"
+                          : <>{r.ptsLeft.toLocaleString()} pts · ~{fmtH((r.g.hours * r.ptsLeft) / r.g.pool)}</>}
+                      </span>
+                    </span>
+                    <button style={miniBtn} title="Send to the next column (wraps around)"
+                      onClick={() => setDraftLanes(insertAt(draftLanes, (L + 1) % 3, draftLanes[(L + 1) % 3].length, appid))}>⇢</button>
+                    <button style={miniBtn} disabled={i === 0}
+                      onClick={() => setDraftLanes(insertAt(draftLanes, L, i - 1, appid))}>▲</button>
+                    <button style={miniBtn} disabled={i === laneIds.length - 1}
+                      onClick={() => setDraftLanes(insertAt(draftLanes, L, i + 1, appid))}>▼</button>
+                    <button style={miniBtn} onClick={() => setDraftLanes(lanesWithout(draftLanes, appid))}>✕</button>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -577,7 +620,8 @@ export default function Future({ stats, meta, mutate, busy, nav }) {
         <div style={{ display: "grid", gap: 2 }}>
           {bench.map((r) => (
             <div key={r.appid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px" }}>
-              <button style={miniBtn} disabled={busy} onClick={() => setDraft([...draft, r.appid])}>+ queue</button>
+              <button style={miniBtn} disabled={busy} title="Adds to column 1 — send it elsewhere with ⇢"
+                onClick={() => setDraftLanes(insertAt(draftLanes, 0, draftLanes[0].length, r.appid))}>+ queue</button>
               <Thumb key={`t${r.appid}`} appid={r.appid} override={coverOf[r.appid]} />
               <span style={{ flex: "1 1 120px", minWidth: 0 }}>{gameLink(r.appid, r.g.name)}</span>
               <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>

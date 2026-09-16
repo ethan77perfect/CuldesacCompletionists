@@ -655,21 +655,25 @@ export function projectQueue({ entries, weekday, weekend, start = Date.now(), ho
     startT: null, endT: null, series: [],
   }));
 
-  // ROTATION (parallel play): games explicitly marked `together` start
-  // simultaneously and split each day's hours equally. When one
-  // finishes, the next queued game auto-joins at that instant, keeping
-  // the rotation at its marked size until the queue runs dry. Fewer
-  // than two marks = the classic serial queue, untouched.
-  const marked = gs.filter((g) => g.together);
-  const R = marked.length >= 2 ? marked.length : 1;
-  const rotation = R > 1 ? [...marked] : gs.slice(0, 1);
-  const tail = R > 1 ? gs.filter((g) => !g.together) : gs.slice(1);
-  let ti = 0;
-  for (const g of rotation) { g.startT = t0; g.series.push({ t: t0, pts: g.ptsLeft }); }
+  // LANES (parallel play): the queue is up to three independent
+  // columns. The TOP game of every non-empty lane runs simultaneously,
+  // splitting each day's hours equally among active lanes; when a game
+  // finishes, ITS OWN lane advances to its next game — regardless of
+  // what's happening in the other lanes. A drained lane just means the
+  // survivors split fewer ways. One populated lane = the classic
+  // serial queue, byte-for-byte.
+  const lanes = [];
+  for (const g of gs) {
+    const L = Math.max(0, Math.min(2, Number(g.lane ?? 0)));
+    (lanes[L] ??= []).push(g);
+  }
+  const live = lanes.filter((l) => l && l.length);     // non-empty lanes, in column order
+  const heads = live.map((l) => l.shift());            // the active game of each lane
+  for (const g of heads) { g.startT = t0; g.series.push({ t: t0, pts: g.ptsLeft }); }
 
   const days = [], completions = [];
   let truncated = false;
-  for (let day = 0; rotation.length; day++) {
+  for (let day = 0; heads.length; day++) {
     if (day >= horizonDays) { truncated = true; break; }
     // step by calendar days, not by 24h blocks — a projection that
     // crosses a DST change must still key to true local midnights or
@@ -680,41 +684,43 @@ export function projectQueue({ entries, weekday, weekend, start = Date.now(), ho
     const budget = isWknd(dayT) ? weekend : weekday;
     let h = budget;
     const done = [];
-    while (h > 1e-9 && rotation.length) {
-      const n = rotation.length;
-      const minRem = Math.min(...rotation.map((g) => g.rem));
+    while (h > 1e-9 && heads.length) {
+      const n = heads.length;
+      const minRem = Math.min(...heads.map((g) => g.rem));
       const need = minRem * n;               // total hours until the soonest finish at equal split
       if (need <= h + 1e-9) {
         h = Math.max(0, h - need);
         // completion instant, placed proportionally through the day
         const tC = dayT + Math.round(((budget - h) / budget) * (dayEnd - dayT));
-        for (const g of rotation) g.rem -= minRem;
-        const finishers = rotation.filter((g) => g.rem <= 1e-9);
-        for (const g of finishers) {
+        for (const g of heads) g.rem -= minRem;
+        for (let k = heads.length - 1; k >= 0; k--) {
+          const g = heads[k];
+          if (g.rem > 1e-9) continue;
           g.rem = 0; g.endT = tC;
           g.series.push({ t: tC, pts: 0 });
           completions.push({ appid: g.appid, name: g.name, t: tC, count: completions.length + 1 });
           done.push(g.appid);
-        }
-        for (const g of finishers) rotation.splice(rotation.indexOf(g), 1);
-        while (rotation.length < R && ti < tail.length) {   // auto-join, queue order
-          const nj = tail[ti++];
-          nj.startT = tC; nj.series.push({ t: tC, pts: nj.ptsLeft });
-          rotation.push(nj);
+          const next = live[k].shift();      // this lane succeeds itself, or drains
+          if (next) {
+            next.startT = tC; next.series.push({ t: tC, pts: next.ptsLeft });
+            heads[k] = next;
+          } else {
+            heads.splice(k, 1); live.splice(k, 1);
+          }
         }
       } else {
-        for (const g of rotation) g.rem -= h / n;
+        for (const g of heads) g.rem -= h / n;
         h = 0;
       }
     }
     // end-of-day sample for EVERY active game — on rest days this
     // repeats the value, which draws the plateau honestly.
-    for (const g of rotation) g.series.push({ t: dayEnd, pts: g.rem * g.rate });
-    const lead = rotation[0] ?? null;
+    for (const g of heads) g.series.push({ t: dayEnd, pts: g.rem * g.rate });
+    const lead = heads[0] ?? null;
     days.push({
       t: dayT,
-      appid: lead?.appid ?? null,                        // rotation leader (compat with the calendar)
-      also: rotation.slice(1).map((g) => g.appid),       // co-runners this day, if any
+      appid: lead?.appid ?? null,                        // leftmost active lane (compat with the calendar)
+      also: heads.slice(1).map((g) => g.appid),          // co-runners this day, if any
       ptsEnd: lead ? Math.round(lead.rem * lead.rate) : 0,
       done,
       rest: budget <= 0,

@@ -38,7 +38,7 @@ async function lookupGame(appid, steamKey) {
   ]);
   const j = await schemaR.json().catch(() => null);
   const storeJ = await storeR.json().catch(() => null);
-  const schemaName = j?.game?.gameName;``
+  const schemaName = j?.game?.gameName;
   const storeName = storeJ?.[appid]?.success ? storeJ[appid]?.data?.name : null;
   const isPlaceholder = /steamtempholder|valvetestapp|untitled/i.test(schemaName ?? "");
   return {
@@ -398,22 +398,32 @@ export default async function handler(req, res) {
           .eq("steamid", sid).select("steamid");
         if (upd.error) return fail(500, upd.error.message);
         if (!(upd.data ?? []).length) return fail(404, "No such member");
-        const appids = [...new Set((body.appids ?? []).map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+        // v18: the queue arrives as up to three LANES — independent
+        // columns played in parallel. `position` orders within a lane.
+        // Accept legacy flat `appids` too (everything lands in lane 0).
+        const rawLanes = Array.isArray(body.lanes) ? body.lanes.slice(0, 3)
+          : [Array.isArray(body.appids) ? body.appids : []];
+        const seen = new Set();
+        const rows = [];
+        const hexOk = (c) => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
+        rawLanes.forEach((laneIds, lane) => {
+          let pos = 0;
+          for (const raw of laneIds ?? []) {
+            const appid = Number(raw);
+            if (!Number.isFinite(appid) || appid <= 0 || seen.has(appid)) continue;
+            seen.add(appid);
+            rows.push({ steamid: sid, appid, position: pos++, lane,
+              color: hexOk(body.colors?.[appid]) ? body.colors[appid] : null });
+          }
+        });
         const del = await supabase.from("queue").delete().eq("steamid", sid);
         if (del.error) return fail(500, del.error.message);
-        if (appids.length) {
-          // per-game colors ride along (v15): #rrggbb or null = default palette
-          const hexOk = (c) => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
-          const rows = appids.map((appid, idx) => ({
-            steamid: sid, appid, position: idx,
-            color: hexOk(body.colors?.[appid]) ? body.colors[appid] : null,
-            together: body.together?.[appid] === true,          // rotation marks (v17)
-          }));
+        if (rows.length) {
           let ins = await supabase.from("queue").insert(rows);
-          if (ins.error && /together/i.test(ins.error.message))   // pre-v17 DB: save without rotation marks
-            ins = await supabase.from("queue").insert(rows.map(({ together, ...r }) => r));
+          if (ins.error && /lane/i.test(ins.error.message))       // pre-v18 DB: flatten to global order
+            ins = await supabase.from("queue").insert(rows.map(({ lane, ...r }, idx) => ({ ...r, position: idx })));
           if (ins.error && /color/i.test(ins.error.message))      // pre-colors DB: strip those too
-            ins = await supabase.from("queue").insert(rows.map(({ color, together, ...r }) => r));
+            ins = await supabase.from("queue").insert(rows.map(({ lane, color, ...r }, idx) => ({ ...r, position: idx })));
           if (ins.error) return fail(500, ins.error.message);
         }
         return res.status(200).json({ ok: true });
