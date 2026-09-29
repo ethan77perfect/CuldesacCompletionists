@@ -33,7 +33,7 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData, fetchRecentAppids } from "../lib/steamFetch.js";
-import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget } from "../lib/clubSync.js";
+import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget, writeGrowthAndHours } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
 // GAME_BUDGET is computed per-request from the member count — see below.
@@ -144,8 +144,9 @@ export default async function handler(req, res) {
 
   // ---- discoveries: pioneers + announcements, per-game watermarks ----
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
-  const existingComp = await db.from("completions").select("steamid, appid");
+  const existingComp = await db.from("completions").select("steamid, appid, hours");
   const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
+  const hourlessCompletionKeys = new Set((existingComp.data ?? []).filter((r) => r.hours == null).map((r) => `${r.steamid}|${r.appid}`));
   const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
   const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
   const cfg = settingsRow.data?.data ?? {};
@@ -156,7 +157,7 @@ export default async function handler(req, res) {
     rarePct: cfg.notifyRarePct ?? 1.0, pioneerPct: cfg.pioneerPct ?? 1.0,
     existingPioneerKeys, pioneerFirstScan,
     profiles: payload.profiles,
-    existingCompletionKeys,
+    existingCompletionKeys, hourlessCompletionKeys,
   });
   payload.announceWatermark = { ...payload.announceWatermark, ...ann.watermark };
 
@@ -178,14 +179,21 @@ export default async function handler(req, res) {
   }
 
   if (ann.pioneerInserts.length) await db.from("pioneers").upsert(ann.pioneerInserts);
+  const growthNotes = await writeGrowthAndHours(db, ann);
   let completionsWriteError = null;
   if (ann.completionInserts.length) {
-    let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+    const withHours = ann.completionInserts.filter((r) => r.hours !== null);
+    const hourless = ann.completionInserts.filter((r) => r.hours === null);
+    let up = withHours.length ? await db.from("completions").upsert(withHours, { ignoreDuplicates: true }) : { error: null };   // frozen forever
     if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
-      up = await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+      up = await db.from("completions").upsert(withHours.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+    if (!up.error && hourless.length) {   // v20: the dated fact even when playtime is private
+      const h = await db.from("completions").upsert(hourless, { ignoreDuplicates: true });
+      if (h.error) up = { error: { message: h.error.message + " (hours may be null since v20)" } };
+    }
     // This write failed in silence for WEEKS because nothing read the
     // error (the table didn't exist). Writes fail loudly — house law.
-    if (up.error) completionsWriteError = up.error.message + " — run migration-v19.sql?";
+    if (up.error) completionsWriteError = up.error.message + " — run supabase/migration-v20.sql?";
   }
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   if (webhook && ann.embeds.length && wrote) await postDiscord(webhook, ann.embeds);
@@ -199,6 +207,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true, budget: GAME_BUDGET, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
     ...(completionsWriteError ? { completionsWriteError } : {}),
+    ...(growthNotes.length ? { growthNotes } : {}),
     ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0, gamesVetoed: carried?.gamesVetoed ?? 0,
     ...(forceRaw ? { forcedRemaining } : {}),
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
