@@ -70,7 +70,7 @@ export default function Trophies({ stats, meta, nav }) {
           <div style={{ display: "grid", gap: 6 }}>
             {crowns.map((mo) => (
               <div key={mo.month} style={{ display: "flex", gap: 8, fontSize: 13, alignItems: "baseline", flexWrap: "wrap" }}>
-                <span style={{ color: "var(--faint)", width: 92 }}>{mo.label}</span>
+                <span style={{ color: "var(--faint)", width: 92 }}>{mo.label}{mo.frozen ? " 🔒" : ""}</span>
                 <span>{mo.winners.map((sid, i) => <span key={sid}>{i > 0 && " & "}<Who sid={sid} /></span>)}</span>
                 <span style={{ color: "var(--muted)", marginLeft: "auto" }}>{mo.standings[0]?.pts} pts</span>
               </div>
