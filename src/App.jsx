@@ -274,6 +274,30 @@ export default function App() {
   const [newGame, setNewGame] = useState("");
   const [gameSort, setGameSort] = useState("missing");   // Settings tracked-games sort
 
+  // AUTO-SCREENSHOT: any finished, unfrozen month past its grace window
+  // gets its finals written by whoever loads the site first — on ANY
+  // page, not just the History tab. First writer wins server-side;
+  // failures stay silent (pre-v19 DBs). Hooks must live here at the
+  // top level: calling them inside a conditional render closure
+  // changes the hook count between renders, and React unmounts the
+  // whole tree (the white-page bug).
+  const frozeRef = useRef(new Set());
+  useEffect(() => {
+    if (!stats?.monthHistory) return;
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date()).split("-").map(Number);
+    const pm = p[1] === 1 ? [p[0] - 1, 12] : [p[0], p[1] - 1];
+    const prevKey = `${pm[0]}-${String(pm[1]).padStart(2, "0")}`;
+    for (const mo of stats.monthHistory) {
+      if (!mo.done || mo.frozen || frozeRef.current.has(mo.month)) continue;
+      if (mo.month === prevKey && p[2] < 4) continue;             // grace mirror
+      frozeRef.current.add(mo.month);
+      mutate("freezeMonth", { month: mo.month, standings: mo.standings, winners: mo.winners },
+        null, { quiet: true, silentError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats]);
+
   const board = stats
     ? (boardMode === "month" ? stats.monthBoard : boardMode === "contracts" ? stats.contractBoard : stats.board)
     : [];
@@ -467,27 +491,7 @@ export default function App() {
               ))}
             </div>
             {boardMode === "history" && (() => {
-              // AUTO-SCREENSHOT: any finished, unfrozen month past its grace
-  // window gets its finals written by whoever loads the site first.
-  // First writer wins server-side; failures stay silent (pre-v19 DBs).
-  const frozeRef = useRef(new Set());
-  useEffect(() => {
-    if (!stats?.monthHistory) return;
-    const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
-      .format(new Date()).split("-").map(Number);
-    const pm = p[1] === 1 ? [p[0] - 1, 12] : [p[0], p[1] - 1];
-    const prevKey = `${pm[0]}-${String(pm[1]).padStart(2, "0")}`;
-    for (const mo of stats.monthHistory) {
-      if (!mo.done || mo.frozen || frozeRef.current.has(mo.month)) continue;
-      if (mo.month === prevKey && p[2] < 4) continue;             // grace mirror
-      frozeRef.current.add(mo.month);
-      mutate("freezeMonth", { month: mo.month, standings: mo.standings, winners: mo.winners },
-        null, { quiet: true, silentError: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stats]);
-
-  const nameOf = (sid) => stats.byId[sid]?.name ?? sid;
+              const nameOf = (sid) => stats.byId[sid]?.name ?? sid;
               const colorOf = (sid) => stats.byId[sid]?.color;
               const banners = stats.board.filter((p) => p.monthWins > 0)
                 .sort((a, b) => b.monthWins - a.monthWins);
