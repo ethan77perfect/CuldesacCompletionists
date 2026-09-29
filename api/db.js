@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState, futureBaselines, monthFinals] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState, futureBaselines, monthFinals, gameGrowth] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -100,6 +100,7 @@ export default async function handler(req, res) {
         supabase.from("gauntlet_state").select("*"),
         supabase.from("future_baselines").select("*"),
         supabase.from("month_finals").select("*").order("month"),
+        supabase.from("game_growth").select("*").order("detected_at"),
       ]);
       // gauntlet_events can outgrow PostgREST's silent 1000-row cap
       // (the Burndown lesson) — page until a short page. Streak
@@ -139,6 +140,7 @@ export default async function handler(req, res) {
         gauntletEvents,
         futureBaselines: futureBaselines.error ? [] : (futureBaselines.data ?? []),   // tolerate pre-v17 DBs
         monthFinals: monthFinals.error ? [] : (monthFinals.data ?? []),               // tolerate pre-v19 DBs
+        gameGrowth: gameGrowth.error ? [] : (gameGrowth.data ?? []),                  // tolerate pre-v20 DBs
       });
     }
 
