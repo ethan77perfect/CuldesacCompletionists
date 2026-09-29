@@ -26,6 +26,75 @@ export const monthKey = (t) => {
   if (k === undefined) { k = monthFmt.format(new Date(t * 1000)); monthMemo.set(h, k); }
   return k;
 };
+// Epoch (s) of 00:00 club time on a club-calendar date. Two passes of
+// "format the guess in the club zone, correct by the difference" pin
+// the instant exactly, DST edges included.
+const clubPartsFmt = new Intl.DateTimeFormat("en-US", { timeZone: CLUB_TZ, hourCycle: "h23",
+  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+export const clubMidnight = (y, m, d) => {
+  const want = Date.UTC(y, m - 1, d) / 1000;
+  let t = want;
+  for (let i = 0; i < 2; i++) {
+    const p = Object.fromEntries(clubPartsFmt.formatToParts(new Date(t * 1000))
+      .filter((x) => x.type !== "literal").map((x) => [x.type, Number(x.value)]));
+    const wall = Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) / 1000;
+    t += want - wall;
+  }
+  return t;
+};
+// First instant AFTER a club month ("2026-08" → Sep 1 00:00 club time).
+const monthEndMemo = new Map();
+export const monthEndEpoch = (key) => {
+  let e = monthEndMemo.get(key);
+  if (e === undefined) {
+    const [y, m] = key.split("-").map(Number);
+    e = m === 12 ? clubMidnight(y + 1, 1, 1) : clubMidnight(y, m + 1, 1);
+    monthEndMemo.set(key, e);
+  }
+  return e;
+};
+
+// THE PERFECT RULE (v20). The completion bonus belongs to the first
+// month at whose end the member stood at 100% of the game AS IT WAS
+// THEN. A game growing later can't reach back into a closed month —
+// but a game that grows in the same month un-perfects it there (they
+// weren't 100% when the month closed; re-earning the new set later
+// earns the bonus in that later month). One bonus per game, ever.
+// Nothing here needs a hand-written record: unlock timestamps plus the
+// growth ledger say how many achievements existed at any instant and
+// how many the member held. All-time points are present truth, so
+// `current` reports whether the shelf still shows 100%.
+//   unlocks:  [{ t }] epoch s (0 = undated → counted as always held)
+//   total:    the game's achievement count today
+//   growth:   [{ at, added }] when the list grew, epoch s, any order
+//   complete: 100% right now
+//   nowT:     the derivation instant, epoch s
+// → { t, current } or null
+export function perfectRule({ unlocks, total, growth = [], complete, nowT }) {
+  if (!total) return null;
+  const times = unlocks.map((u) => u.t || 0).sort((a, b) => a - b);
+  const last = times.length ? times[times.length - 1] : 0;
+  // The common case: a game that never grew is complete now or never was.
+  if (!growth.length) return complete ? { t: last || nowT, current: true } : null;
+  const grown = [...growth].sort((a, b) => a.at - b.at);
+  const sizeAt = (x) => { let n = total; for (const g of grown) if (g.at > x) n -= g.added; return n; };
+  const heldAt = (x) => { let n = 0; for (const t of times) { if (t <= x) n++; else break; } return n; };
+  const reachedBy = (x) => { let r = 0; for (const t of times) { if (t <= x) r = t; else break; } return r; };
+  // Walk closed month-ends, starting at the earliest month in which the
+  // member could possibly have held the game's original list.
+  const firstSize = sizeAt(-Infinity);
+  const start = times[firstSize - 1];
+  if (firstSize > 0 && start !== undefined) {
+    for (let key = monthKey(start), end = monthEndEpoch(key); end <= nowT; key = monthKey(end), end = monthEndEpoch(key)) {
+      const x = end - 1;                       // the month's last second
+      const sz = sizeAt(x);
+      if (sz > 0 && heldAt(x) >= sz) return { t: reachedBy(x) || start || x, current: !!complete };
+    }
+  }
+  // No closed month caught them at 100%: the live month is present truth.
+  return complete ? { t: last || nowT, current: true } : null;
+}
+
 // ISO-8601 week label ("2026-W31") — used for streak tracking. The
 // UTC+Thursday dance is the standard trick for ISO week numbering.
 const isoWeek = (t) => {
@@ -99,16 +168,24 @@ export function buildClubStats(clubData, meta, settings) {
   // club alone — real data beats a blank. The curve is founded on the
   // blended values, so finishing a game can (honestly) re-rate it.
   const clubTimes = {};
-  // completion FACTS (v19): once perfected, always perfected — the row
-  // is the permanent record, its completed_at the permanent date. A
-  // game growing new achievements un-completes your PRESENT (shelf,
-  // backlog, board), never your recorded past.
-  const perfectedAt = new Map();   // "sid|appid" -> epoch seconds (or null = fact without date)
+  // Completions carry the hours vote; the completion BONUS is derived by
+  // perfectRule() from unlock timestamps + the growth ledger (v20).
   for (const c of meta.completions ?? []) {
     const h = Number(c.hours);
     if (Number.isFinite(h) && h > 0) (clubTimes[Number(c.appid)] ??= []).push(h);
-    perfectedAt.set(`${c.steamid}|${c.appid}`, c.completed_at ? Date.parse(c.completed_at) / 1000 : null);
   }
+  // GROWTH LEDGER: appid -> [{ at, added }] — when each game's
+  // achievement list got longer. Sync-stamped rows are exact; rows
+  // seeded from nightly snapshots carry the end of their club day.
+  const growthByApp = new Map();
+  for (const g of meta.gameGrowth ?? []) {
+    const added = Number(g.total) - Number(g.prev_total);
+    const at = g.detected_at ? Date.parse(g.detected_at) / 1000 : null;
+    if (!(added > 0) || !Number.isFinite(at)) continue;
+    if (!growthByApp.has(Number(g.appid))) growthByApp.set(Number(g.appid), []);
+    growthByApp.get(Number(g.appid)).push({ at, added });
+  }
+  const nowT = Date.now() / 1000;
   const hoursOf = (row) => {
     if (!row) return null;
     const votes = [
@@ -185,17 +262,15 @@ export function buildClubStats(clubData, meta, settings) {
           achId: u.id, achName: a?.name ?? u.id, pct: a ? a.pct : null, provisional: a ? a.provisional : true,
         });
       }
-      // The bonus fires if they EVER perfected this game (the fact),
-      // anchored at the recorded completion date — falling back to
-      // their last earned unlock, which for the DLC case is exactly
-      // the original completion moment. `r.complete` still covers a
-      // fresh perfect the cron hasn't recorded yet.
-      const perfKey = `${sid}|${g.appid}`;
-      if ((r.complete || perfectedAt.has(perfKey)) && r.lastUnlock) {
+      // The completion bonus, by THE PERFECT RULE: the first month-end
+      // that found them at 100% of the game as it was then, else the
+      // live present. `current` = the shelf still shows 100%.
+      const perf = perfectRule({ unlocks: r.unlocks, total: g.ach.length,
+        growth: growthByApp.get(Number(g.appid)) ?? [], complete: r.complete, nowT });
+      if (perf) {
         events.push({
-          sid, appid: g.appid, gameName: g.name,
-          t: perfectedAt.get(perfKey) ?? r.lastUnlock,
-          kind: "complete", pts: g.table.bonusPts,
+          sid, appid: g.appid, gameName: g.name, t: perf.t,
+          kind: "complete", pts: g.table.bonusPts, current: perf.current,
         });
       }
     }
@@ -267,10 +342,15 @@ export function buildClubStats(clubData, meta, settings) {
   for (const e of events) {
     const p = perPlayer[e.sid];
     if (!p) continue;
-    p.points += e.pts;
-    if (e.contract) {
-      p.contractPts = (p.contractPts ?? 0) + e.pts;
-      if (e.kind === "unlock") p.contractKills = (p.contractKills ?? 0) + 1;
+    // All-time is PRESENT truth: a completion bonus counts here only
+    // while the game is still 100%. Month buckets are HISTORY (below).
+    const standing = e.kind !== "complete" || e.current;
+    if (standing) {
+      p.points += e.pts;
+      if (e.contract) {
+        p.contractPts = (p.contractPts ?? 0) + e.pts;
+        if (e.kind === "unlock") p.contractKills = (p.contractKills ?? 0) + 1;
+      }
     }
     if (monthKey(e.t) === thisMonth) { p.monthPoints += e.pts; if (e.kind === "unlock") p.monthUnlocks += 1; }
     p.weeks.add(isoWeek(e.t));
