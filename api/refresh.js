@@ -179,7 +179,11 @@ export default async function handler(req, res) {
 
   if (ann.pioneerInserts.length) await db.from("pioneers").upsert(ann.pioneerInserts);
   if (ann.completionInserts.length)
-    await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+  {
+    let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+    if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
+      await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+  }
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   if (webhook && ann.embeds.length && wrote) await postDiscord(webhook, ann.embeds);
 
