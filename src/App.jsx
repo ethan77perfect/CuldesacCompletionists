@@ -252,6 +252,7 @@ export default function App() {
       else await after();
       return j;
     } catch (e) {
+      if (opts.silentError) return null;   // background chores fail quietly
       setError(e.message || "That didn't work");
     } finally {
       setBusy(false);
@@ -466,7 +467,27 @@ export default function App() {
               ))}
             </div>
             {boardMode === "history" && (() => {
-              const nameOf = (sid) => stats.byId[sid]?.name ?? sid;
+              // AUTO-SCREENSHOT: any finished, unfrozen month past its grace
+  // window gets its finals written by whoever loads the site first.
+  // First writer wins server-side; failures stay silent (pre-v19 DBs).
+  const frozeRef = useRef(new Set());
+  useEffect(() => {
+    if (!stats?.monthHistory) return;
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date()).split("-").map(Number);
+    const pm = p[1] === 1 ? [p[0] - 1, 12] : [p[0], p[1] - 1];
+    const prevKey = `${pm[0]}-${String(pm[1]).padStart(2, "0")}`;
+    for (const mo of stats.monthHistory) {
+      if (!mo.done || mo.frozen || frozeRef.current.has(mo.month)) continue;
+      if (mo.month === prevKey && p[2] < 4) continue;             // grace mirror
+      frozeRef.current.add(mo.month);
+      mutate("freezeMonth", { month: mo.month, standings: mo.standings, winners: mo.winners },
+        null, { quiet: true, silentError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats]);
+
+  const nameOf = (sid) => stats.byId[sid]?.name ?? sid;
               const colorOf = (sid) => stats.byId[sid]?.color;
               const banners = stats.board.filter((p) => p.monthWins > 0)
                 .sort((a, b) => b.monthWins - a.monthWins);
@@ -489,6 +510,7 @@ export default function App() {
                     <div key={mo.month} className="panel" style={S.panel}>
                       <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 10, flexWrap: "wrap" }}>
                         <span style={{ ...S.display, fontSize: 17, fontWeight: 700 }}>{mo.label}</span>
+                        {mo.frozen && <span title={`Finals frozen ${mo.frozenAt ? new Date(mo.frozenAt).toLocaleDateString() : ""} — this month is history and cannot be re-litigated`} style={{ fontSize: 12 }}>🔒</span>}
                         {mo.done ? (
                           mo.winners.length
                             ? <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>
