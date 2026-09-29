@@ -188,7 +188,11 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
   }
   if (ann.completionInserts.length)
-    await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+  {
+    let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+    if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
+      await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+  }
   if (ann.pioneerInserts.length) {
     const w = await db.from("pioneers").upsert(ann.pioneerInserts);
     if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });
