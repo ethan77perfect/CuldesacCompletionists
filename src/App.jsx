@@ -511,6 +511,19 @@ export default function App() {
                       <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 10, flexWrap: "wrap" }}>
                         <span style={{ ...S.display, fontSize: 17, fontWeight: 700 }}>{mo.label}</span>
                         {mo.frozen && <span title={`Finals frozen ${mo.frozenAt ? new Date(mo.frozenAt).toLocaleDateString() : ""} — this month is history and cannot be re-litigated`} style={{ fontSize: 12 }}>🔒</span>}
+                        {mo.frozen && mo.live && JSON.stringify(mo.live.winners) !== JSON.stringify(mo.winners) && (
+                          <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                            <span style={{ fontSize: 11, color: "var(--err-border, #E05B5B)" }}>
+                              ⚠ live data now disagrees (👑 {mo.live.winners.map(nameOf).join(" & ") || "nobody"})
+                            </span>
+                            <button style={{ ...S.btnGhost, padding: "1px 8px", fontSize: 11 }} disabled={busy}
+                              title="Overwrite this month's frozen finals with today's live derivation — the club-key repair lever"
+                              onClick={() => mutate("refreezeMonth", { month: mo.month, standings: mo.live.standings, winners: mo.live.winners },
+                                () => `${mo.label} re-screenshotted — history corrected.`)}>
+                              ↺ Re-screenshot
+                            </button>
+                          </span>
+                        )}
                         {mo.done ? (
                           mo.winners.length
                             ? <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>
@@ -537,10 +550,10 @@ export default function App() {
                               </a>
                               <span style={{ ...S.display, minWidth: 76, textAlign: "right", fontWeight: 700,
                                 color: crowned ? "var(--accent)" : !mo.done && i === 0 && row.pts > 0 ? "var(--ink-strong)" : "var(--muted)" }}>
-                                {row.pts.toLocaleString()}
+                                {(row.pts ?? 0).toLocaleString()}
                               </span>
                               <span style={{ fontSize: 12, color: "var(--faint)" }}>
-                                {row.unlocks} unlock{row.unlocks === 1 ? "" : "s"}
+                                {row.unlocks ?? 0} unlock{(row.unlocks ?? 0) === 1 ? "" : "s"}
                                 {!mo.done && i === 0 && row.pts > 0 && " · leading"}
                               </span>
                             </div>
