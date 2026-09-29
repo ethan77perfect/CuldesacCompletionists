@@ -178,11 +178,14 @@ export default async function handler(req, res) {
   }
 
   if (ann.pioneerInserts.length) await db.from("pioneers").upsert(ann.pioneerInserts);
-  if (ann.completionInserts.length)
-  {
+  let completionsWriteError = null;
+  if (ann.completionInserts.length) {
     let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
     if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
-      await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+      up = await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+    // This write failed in silence for WEEKS because nothing read the
+    // error (the table didn't exist). Writes fail loudly — house law.
+    if (up.error) completionsWriteError = up.error.message + " — run migration-v19.sql?";
   }
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   if (webhook && ann.embeds.length && wrote) await postDiscord(webhook, ann.embeds);
@@ -195,6 +198,7 @@ export default async function handler(req, res) {
   const staleRemaining = Math.max(0, staleCount - gotIds.size);
   return res.status(200).json({
     ok: true, budget: GAME_BUDGET, fetchedGames: gotIds.size, staleRemaining, hot: hotIds.size,
+    ...(completionsWriteError ? { completionsWriteError } : {}),
     ownedCarried: carried?.owned ?? [], playersCarried: carried?.players ?? 0, gamesVetoed: carried?.gamesVetoed ?? 0,
     ...(forceRaw ? { forcedRemaining } : {}),
     persisted: wrote, payload, payloadFetchedAt: prevRow?.fetched_at ?? null,
