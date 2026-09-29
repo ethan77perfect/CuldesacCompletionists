@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
     if (req.method === "GET") {
-      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState, futureBaselines] = await Promise.all([
+      const [members, games, settings, backlog, contracts, hunts, challenges, claims, pioneers, century, covers, bingoRounds, bingoCards, completions, queue, roguelikes, gauntletState, futureBaselines, monthFinals] = await Promise.all([
         supabase.from("members").select("*").order("added_at"),
         supabase.from("games").select("*").order("added_at"),
         supabase.from("settings").select("data").eq("id", 1).maybeSingle(),
@@ -99,6 +99,7 @@ export default async function handler(req, res) {
         supabase.from("roguelikes").select("*").order("added_at"),
         supabase.from("gauntlet_state").select("*"),
         supabase.from("future_baselines").select("*"),
+        supabase.from("month_finals").select("*").order("month"),
       ]);
       // gauntlet_events can outgrow PostgREST's silent 1000-row cap
       // (the Burndown lesson) — page until a short page. Streak
@@ -137,6 +138,7 @@ export default async function handler(req, res) {
         gauntletState: gauntletState.error ? [] : (gauntletState.data ?? []),
         gauntletEvents,
         futureBaselines: futureBaselines.error ? [] : (futureBaselines.data ?? []),   // tolerate pre-v17 DBs
+        monthFinals: monthFinals.error ? [] : (monthFinals.data ?? []),               // tolerate pre-v19 DBs
       });
     }
 
@@ -448,6 +450,33 @@ export default async function handler(req, res) {
         const d = await supabase.from("future_baselines").delete().eq("steamid", sid);
         if (d.error) return fail(500, d.error.message);
         return res.status(200).json({ ok: true });
+      }
+
+      case "freezeMonth":
+      case "refreezeMonth": {
+        // The screenshot. freezeMonth: first writer wins, forever.
+        // refreezeMonth: the club-key repair lever — overwrites, for
+        // when a frozen month is later PROVEN wrong.
+        const month = String(body.month ?? "");
+        if (!/^\d{4}-\d{2}$/.test(month)) return fail(400, "month must be YYYY-MM");
+        if (!Array.isArray(body.standings) || !body.standings.length) return fail(400, "standings required");
+        // grace, club clock: the just-ended month may only freeze from
+        // its 4th day on — late syncs get their healing window first.
+        const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+          .format(new Date()).split("-").map(Number);
+        const curKey = `${parts[0]}-${String(parts[1]).padStart(2, "0")}`;
+        const pm = parts[1] === 1 ? [parts[0] - 1, 12] : [parts[0], parts[1] - 1];
+        const prevKey = `${pm[0]}-${String(pm[1]).padStart(2, "0")}`;
+        if (month >= curKey) return fail(400, "only finished months freeze");
+        if (month === prevKey && parts[2] < 4)
+          return res.status(200).json({ ok: true, frozen: false, grace: true });
+        const row = { month, standings: body.standings, winners: Array.isArray(body.winners) ? body.winners : [],
+          frozen_at: new Date().toISOString() };
+        const w = op === "refreezeMonth"
+          ? await supabase.from("month_finals").upsert(row)
+          : await supabase.from("month_finals").upsert(row, { ignoreDuplicates: true });
+        if (w.error) return fail(500, w.error.message + " — run migration-v19.sql?");
+        return res.status(200).json({ ok: true, frozen: true });
       }
 
       // ---- monthly hunts ----
