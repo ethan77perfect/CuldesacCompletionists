@@ -25,7 +25,7 @@ export const config = { maxDuration: 60 };
 
 import { createClient } from "@supabase/supabase-js";
 import { fetchClubData } from "../lib/steamFetch.js";
-import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget } from "../lib/clubSync.js";
+import { computeTargets, mergePayload, buildSnapshotRows, diffAnnouncements, casWriteCache, gameBudget, writeGrowthAndHours } from "../lib/clubSync.js";
 
 const CLUB_TZ = "America/New_York";
 const tzPart = (type) =>
@@ -144,8 +144,9 @@ export default async function handler(req, res) {
   // also puts `ann` in scope for the CAS-retry path below, which
   // referenced it before its declaration (a crash waiting on a race).
   const existingPio = await db.from("pioneers").select("steamid, appid, achid");
-  const existingComp = await db.from("completions").select("steamid, appid");
+  const existingComp = await db.from("completions").select("steamid, appid, hours");
   const existingCompletionKeys = new Set((existingComp.data ?? []).map((r) => `${r.steamid}|${r.appid}`));
+  const hourlessCompletionKeys = new Set((existingComp.data ?? []).filter((r) => r.hours == null).map((r) => `${r.steamid}|${r.appid}`));
   const existingPioneerKeys = new Set((existingPio.data ?? []).map((r) => `${r.steamid}|${r.appid}|${r.achid}`));
   const pioneerFirstScan = !existingPio.error && existingPioneerKeys.size === 0;
   const nameOf = Object.fromEntries((members.data ?? []).map((m) => [m.steamid, m.name]));
@@ -157,7 +158,7 @@ export default async function handler(req, res) {
     pioneerPct: settingsRow.data?.data?.pioneerPct ?? 1.0,
     existingPioneerKeys, pioneerFirstScan,
     profiles: data.profiles,
-    existingCompletionKeys,
+    existingCompletionKeys, hourlessCompletionKeys,
   });
   data.announceWatermark = { ...data.announceWatermark, ...ann.watermark };
 
@@ -189,17 +190,24 @@ export default async function handler(req, res) {
   }
   let completionsWriteError = null;
   if (ann.completionInserts.length) {
-    let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
+    const withHours = ann.completionInserts.filter((r) => r.hours !== null);
+    const hourless = ann.completionInserts.filter((r) => r.hours === null);
+    let up = withHours.length ? await db.from("completions").upsert(withHours, { ignoreDuplicates: true }) : { error: null };   // frozen forever
     if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
-      up = await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+      up = await db.from("completions").upsert(withHours.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+    if (!up.error && hourless.length) {   // v20: the dated fact even when playtime is private
+      const h = await db.from("completions").upsert(hourless, { ignoreDuplicates: true });
+      if (h.error) up = { error: { message: h.error.message + " (hours may be null since v20)" } };
+    }
     // This write failed in silence for WEEKS because nothing read the
     // error (the table didn't exist). Writes fail loudly — house law.
-    if (up.error) completionsWriteError = up.error.message + " — run migration-v19.sql?";
+    if (up.error) completionsWriteError = up.error.message + " — run supabase/migration-v20.sql?";
   }
   if (ann.pioneerInserts.length) {
     const w = await db.from("pioneers").upsert(ann.pioneerInserts);
     if (w.error) return res.status(500).json({ error: `pioneers write failed: ${w.error.message} — run migration-v5.sql?` });
   }
+  const growthNotes = await writeGrowthAndHours(db, ann);
   const embeds = [...ann.embeds];
 
   // Monday (club time): contract week report + spin-day call —
@@ -243,6 +251,7 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true, budget: GAME_BUDGET, snapshotted: rows.length, failedRequests: data.failed,
     ...(completionsWriteError ? { completionsWriteError } : {}),
+    ...(growthNotes.length ? { growthNotes } : {}),
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
     ownedCarried: carried.owned, playersCarried: carried.players, gamesVetoed: carried.gamesVetoed ?? 0,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,
