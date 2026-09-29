@@ -37,6 +37,20 @@ const isoWeek = (t) => {
   const wk = Math.ceil(((day - y0) / 86400000 + 1) / 7);
   return `${day.getUTCFullYear()}-W${String(wk).padStart(2, "0")}`;
 };
+// Overlay frozen month finals onto the live derivation. Only DONE
+// months can wear a final; unknown finals are ignored; the frozen
+// flag lets the UI show the 🔒.
+export function applyMonthFinals(history, finalsRows) {
+  const byMonth = Object.fromEntries((finalsRows ?? []).map((f) => [f.month, f]));
+  return history.map((mo) => {
+    const f = mo.done ? byMonth[mo.month] : null;
+    if (!f) return mo;
+    return { ...mo, standings: Array.isArray(f.standings) ? f.standings : mo.standings,
+      winners: Array.isArray(f.winners) ? f.winners : mo.winners,
+      frozen: true, frozenAt: f.frozen_at ?? null };
+  });
+}
+
 export const monthLabelOf = () =>
   new Date().toLocaleDateString(undefined, { timeZone: CLUB_TZ, month: "long", year: "numeric" });
 
@@ -77,9 +91,15 @@ export function buildClubStats(clubData, meta, settings) {
   // club alone — real data beats a blank. The curve is founded on the
   // blended values, so finishing a game can (honestly) re-rate it.
   const clubTimes = {};
+  // completion FACTS (v19): once perfected, always perfected — the row
+  // is the permanent record, its completed_at the permanent date. A
+  // game growing new achievements un-completes your PRESENT (shelf,
+  // backlog, board), never your recorded past.
+  const perfectedAt = new Map();   // "sid|appid" -> epoch seconds (or null = fact without date)
   for (const c of meta.completions ?? []) {
     const h = Number(c.hours);
     if (Number.isFinite(h) && h > 0) (clubTimes[Number(c.appid)] ??= []).push(h);
+    perfectedAt.set(`${c.steamid}|${c.appid}`, c.completed_at ? Date.parse(c.completed_at) / 1000 : null);
   }
   const hoursOf = (row) => {
     if (!row) return null;
@@ -157,9 +177,16 @@ export function buildClubStats(clubData, meta, settings) {
           achId: u.id, achName: a?.name ?? u.id, pct: a ? a.pct : null, provisional: a ? a.provisional : true,
         });
       }
-      if (r.complete && r.lastUnlock) {
+      // The bonus fires if they EVER perfected this game (the fact),
+      // anchored at the recorded completion date — falling back to
+      // their last earned unlock, which for the DLC case is exactly
+      // the original completion moment. `r.complete` still covers a
+      // fresh perfect the cron hasn't recorded yet.
+      const perfKey = `${sid}|${g.appid}`;
+      if ((r.complete || perfectedAt.has(perfKey)) && r.lastUnlock) {
         events.push({
-          sid, appid: g.appid, gameName: g.name, t: r.lastUnlock,
+          sid, appid: g.appid, gameName: g.name,
+          t: perfectedAt.get(perfKey) ?? r.lastUnlock,
           kind: "complete", pts: g.table.bonusPts,
         });
       }
@@ -319,12 +346,16 @@ export function buildClubStats(clubData, meta, settings) {
       m++; if (m > 12) { m = 1; y++; }
     }
   }
+  // THE SCREENSHOT (v19): a frozen month's finals replace the live
+  // derivation wholesale — crowns in closed months are history, not
+  // opinion, and no later data can re-litigate them.
+  const monthHistoryFinal = applyMonthFinals(monthHistory, meta.monthFinals);
   for (const p of Object.values(perPlayer)) p.monthWins = 0;
-  for (const mo of monthHistory) {
+  for (const mo of monthHistoryFinal) {
     if (!mo.done) continue;
     for (const w of mo.winners) if (perPlayer[w]) perPlayer[w].monthWins += 1;
   }
-  const finishedMonths = monthHistory.filter((mo) => mo.done && mo.winners.length);
+  const finishedMonths = monthHistoryFinal.filter((mo) => mo.done && mo.winners.length);
   const lastCrowned = finishedMonths[finishedMonths.length - 1];
   const reigning = lastCrowned
     ? { month: lastCrowned.month, label: lastCrowned.label, sids: lastCrowned.winners }
@@ -505,7 +536,7 @@ export function buildClubStats(clubData, meta, settings) {
 
   return {
     games, byId, board, monthBoard, contractBoard, contractView,
-    monthLabel: monthLabelOf(), monthHistory, reigning, events, feed,
+    monthLabel: monthLabelOf(), monthHistory: monthHistoryFinal, reigning, events, feed,
     hallOfFame, graveyard, records, recs, races, challenge, timeline,
     histogram, scatter, clubTotals, perPlayer, profilesPlaytime, profilesOwned, profilesLastPlayed,
   };
