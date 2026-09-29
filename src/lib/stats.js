@@ -45,9 +45,17 @@ export function applyMonthFinals(history, finalsRows) {
   return history.map((mo) => {
     const f = mo.done ? byMonth[mo.month] : null;
     if (!f) return mo;
-    return { ...mo, standings: Array.isArray(f.standings) ? f.standings : mo.standings,
-      winners: Array.isArray(f.winners) ? f.winners : mo.winners,
-      frozen: true, frozenAt: f.frozen_at ?? null };
+    // Frozen rows are DATABASE jsonb, not fresh arithmetic — sanitize
+    // every field on the way in so one malformed row can never
+    // white-page a render that trusts numbers to be numbers.
+    const standings = (Array.isArray(f.standings) ? f.standings : mo.standings)
+      .filter((r) => r && r.sid)
+      .map((r) => ({ sid: String(r.sid), pts: Number(r.pts) || 0, unlocks: Number(r.unlocks) || 0 }));
+    return { ...mo, standings,
+      winners: (Array.isArray(f.winners) ? f.winners : mo.winners).map(String),
+      frozen: true, frozenAt: f.frozen_at ?? null,
+      live: { standings: mo.standings, winners: mo.winners },   // the crowbar's ammunition
+    };
   });
 }
 
