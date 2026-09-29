@@ -187,11 +187,14 @@ export default async function handler(req, res) {
     if (rowWrite.error)
       return res.status(500).json({ error: `snapshots write failed: ${rowWrite.error.message} — did you run supabase/migration-v4.sql?` });
   }
-  if (ann.completionInserts.length)
-  {
+  let completionsWriteError = null;
+  if (ann.completionInserts.length) {
     let up = await db.from("completions").upsert(ann.completionInserts, { ignoreDuplicates: true });   // frozen forever
     if (up.error && /completed_at/i.test(up.error.message))   // pre-v19 DB: save undated
-      await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+      up = await db.from("completions").upsert(ann.completionInserts.map(({ completed_at, ...r }) => r), { ignoreDuplicates: true });
+    // This write failed in silence for WEEKS because nothing read the
+    // error (the table didn't exist). Writes fail loudly — house law.
+    if (up.error) completionsWriteError = up.error.message + " — run migration-v19.sql?";
   }
   if (ann.pioneerInserts.length) {
     const w = await db.from("pioneers").upsert(ann.pioneerInserts);
@@ -239,6 +242,7 @@ export default async function handler(req, res) {
   const staleRemaining = appids.filter((a) => (data.gameFetchedAt[a] ?? 0) < nowEpoch - STALE_AFTER).length;
   return res.status(200).json({
     ok: true, budget: GAME_BUDGET, snapshotted: rows.length, failedRequests: data.failed,
+    ...(completionsWriteError ? { completionsWriteError } : {}),
     fetchedGames: gotIds.size, carriedGames: data.games.length - gotIds.size, staleRemaining,
     ownedCarried: carried.owned, playersCarried: carried.players, gamesVetoed: carried.gamesVetoed ?? 0,
     prevRunAt: prevCache.data?.fetched_at ?? null, firstRun: !prevPayload0,
