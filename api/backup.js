@@ -52,6 +52,7 @@ const CORE_TABLES = [
   "members", "games", "settings", "backlog", "contracts", "hunts",
   "challenges", "claims", "pioneers", "century", "covers",
   "bingo_rounds", "bingo_cards",
+  "completions", "month_finals", "game_growth",   // v21: history and its evidence are human-decision data too
 ];
 
 const monthWindow = (ym) => {
