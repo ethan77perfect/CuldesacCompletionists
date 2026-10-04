@@ -123,6 +123,7 @@ export function applyMonthFinals(history, finalsRows) {
     return { ...mo, standings,
       winners: (Array.isArray(f.winners) ? f.winners : mo.winners).map(String),
       frozen: true, frozenAt: f.frozen_at ?? null,
+      note: typeof f.note === "string" && f.note.trim() ? f.note.trim() : null,   // commissioner's adjustment — settled on purpose
       live: { standings: mo.standings, winners: mo.winners },   // the crowbar's ammunition
     };
   });
