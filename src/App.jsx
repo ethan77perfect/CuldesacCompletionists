@@ -515,7 +515,11 @@ export default function App() {
                       <div style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 10, flexWrap: "wrap" }}>
                         <span style={{ ...S.display, fontSize: 17, fontWeight: 700 }}>{mo.label}</span>
                         {mo.frozen && <span title={`Finals frozen ${mo.frozenAt ? new Date(mo.frozenAt).toLocaleDateString() : ""} — this month is history and cannot be re-litigated`} style={{ fontSize: 12 }}>🔒</span>}
-                        {mo.frozen && mo.live && JSON.stringify(mo.live.winners) !== JSON.stringify(mo.winners) && (
+                        {mo.frozen && mo.note && (
+                          <span title="This month's finals were set by hand with the club key. The live-data repair lever is hidden on purpose: an adjusted month is settled."
+                            style={{ fontSize: 11, color: "var(--muted)" }}>✎ {mo.note}</span>
+                        )}
+                        {mo.frozen && !mo.note && mo.live && JSON.stringify(mo.live.winners) !== JSON.stringify(mo.winners) && (
                           <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
                             <span style={{ fontSize: 11, color: "var(--err-border, #E05B5B)" }}>
                               ⚠ live data now disagrees (👑 {mo.live.winners.map(nameOf).join(" & ") || "nobody"})
